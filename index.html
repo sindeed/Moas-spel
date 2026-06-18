@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="sv">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta
+      name="description"
+      content="Moas spel – en lekfull samlingsplats för spel skapade av Moa."
+    />
+    <meta name="theme-color" content="#f7b7c7" />
+    <title>Moas spel</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <a class="skip-link" href="#spel">Hoppa till spelen</a>
+
+    <div class="sky" aria-hidden="true">
+      <span class="cloud cloud--one"></span>
+      <span class="cloud cloud--two"></span>
+      <span class="star star--one">✦</span>
+      <span class="star star--two">✦</span>
+      <span class="star star--three">✧</span>
+    </div>
+
+    <header class="hero">
+      <div class="hero__badge" aria-hidden="true">♛</div>
+      <p class="eyebrow">Välkommen till</p>
+      <h1>Moas spel</h1>
+      <p class="hero__intro">Små världar, stora äventyr och nya överraskningar.</p>
+      <a class="hero__button" href="#spel">Se spelen <span aria-hidden="true">↓</span></a>
+    </header>
+
+    <main id="spel" class="game-library">
+      <div class="section-heading">
+        <div>
+          <p class="eyebrow">Spelbiblioteket</p>
+          <h2>Välj ett äventyr</h2>
+        </div>
+        <span class="game-count">1 spel på väg</span>
+      </div>
+
+      <article class="game-card game-card--featured">
+        <div class="game-card__art" aria-hidden="true">
+          <span class="moon"></span>
+          <span class="castle">
+            <i class="castle__tower castle__tower--left"></i>
+            <i class="castle__keep"></i>
+            <i class="castle__tower castle__tower--right"></i>
+          </span>
+          <span class="path"></span>
+          <span class="treasure">✦</span>
+        </div>
+
+        <div class="game-card__content">
+          <span class="status">Under utveckling</span>
+          <p class="game-card__number">Äventyr 01</p>
+          <h3>Prinsessans skattjakt</h3>
+          <p>
+            Följ kartan, lös kluriga gåtor och hitta den gömda skatten innan
+            månen går ner.
+          </p>
+          <span class="coming-soon" aria-label="Spelet kommer snart">
+            Kommer snart <span aria-hidden="true">✦</span>
+          </span>
+        </div>
+      </article>
+
+      <aside class="next-adventure" aria-label="Fler spel kommer">
+        <span aria-hidden="true">＋</span>
+        <div>
+          <h3>Här växer världen</h3>
+          <p>När Moa skapar ett nytt spel får det en egen plats här.</p>
+        </div>
+      </aside>
+    </main>
+
+    <footer>
+      <span class="footer__mark" aria-hidden="true">♛</span>
+      <p>Skapat med fantasi av Moa</p>
+      <small>© <span id="year">2026</span> Moas spel</small>
+    </footer>
+
+    <script src="script.js"></script>
+  </body>
+</html>
