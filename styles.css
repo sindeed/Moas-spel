@@ -435,6 +435,26 @@ h1 {
   font-weight: 900;
 }
 
+a.game-card--spelbar {
+  color: inherit;
+  text-decoration: none;
+  transition: transform 180ms ease, box-shadow 180ms ease;
+}
+
+a.game-card--spelbar:hover {
+  box-shadow: 0 30px 70px rgba(68, 38, 74, 0.24);
+  transform: translateY(-4px);
+}
+
+a.game-card--spelbar:focus-visible {
+  outline: 4px solid var(--plum);
+  outline-offset: 4px;
+}
+
+a.game-card--spelbar:hover .coming-soon {
+  background: var(--plum);
+}
+
 .next-adventure {
   display: flex;
   gap: 1.25rem;

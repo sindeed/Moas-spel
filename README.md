@@ -12,4 +12,12 @@ Webbplatsen publiceras med GitHub Pages och kommer att finnas på:
 - `styles.css` – design och responsiv layout
 - `script.js` – små förbättringar i gränssnittet
 
-Spelen läggs senare i egna mappar och länkas från startsidan.
+## Spel
+
+- [`prinsessans-skattjakt/`](prinsessans-skattjakt/) – **Prinsessans skattjakt**:
+  3D-äventyr byggt med Three.js där prinsessan Moa letar nycklar i slottets
+  labyrint, besegrar draken och räddar den förtrollade enhörningen.
+  Baserat på Moas handritade karta. Musik och ljud skapas med WebAudio.
+  Fungerar med tangentbord och pekskärm.
+
+Nya spel läggs i egna mappar och länkas från startsidan.

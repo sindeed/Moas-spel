@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="sv">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+    <meta name="description" content="Prinsessans skattjakt — hjälp prinsessan Moa att rädda den förtrollade enhörningen!" />
+    <meta name="theme-color" content="#f7b7c7" />
+    <title>Prinsessans skattjakt · Moas spel</title>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>👑</text></svg>" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@400;600;700&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <div id="spelet"></div>
+
+    <!-- HUD -->
+    <div id="hud">
+      <div id="hjartan"></div>
+      <div id="nycklar">🗝️ × 0</div>
+      <button id="tystKnapp" aria-label="Ljud på/av">🔊</button>
+    </div>
+
+    <div id="bossruta" class="gomd">
+      <span id="bossnamn">🐉 Draken</span>
+      <div id="bossbar"><div id="bosshp"></div></div>
+    </div>
+
+    <div id="meddelande" role="status"></div>
+    <div id="svartfade"></div>
+
+    <!-- Pekskärmskontroller -->
+    <div id="touch" class="gomd">
+      <div id="styrspak"><div id="spakKnopp"></div></div>
+      <div id="knappar">
+        <button id="knappHopp" aria-label="Hoppa">⤴️</button>
+        <button id="knappMagi" aria-label="Magi">✨</button>
+        <button id="knappSvard" aria-label="Svärd">⚔️</button>
+      </div>
+    </div>
+
+    <!-- Titelskärm -->
+    <div id="titel" class="overlagg">
+      <div class="ruta">
+        <p class="krona">👑</p>
+        <h1>Prinsessans skattjakt</h1>
+        <p class="berattelse">
+          Draken har fångat den förtrollade enhörningen i en magisk bubbla!
+          Hjälp prinsessan <strong>Moa</strong> att hitta nycklarna,
+          ta sig genom slottets labyrint och rädda sin vän. ✨🦄
+        </p>
+        <button id="startKnapp">Starta äventyret ⚔️</button>
+        <div class="kontroller">
+          <p><b>Pilar / WASD</b> gå &nbsp;·&nbsp; <b>Mellanslag</b> svärd &nbsp;·&nbsp; <b>E</b> magiska stjärnor &nbsp;·&nbsp; <b>Shift</b> hoppa</p>
+          <p class="mobilrad">På surfplatta: styrspaken till vänster, knapparna till höger!</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Segerskärm -->
+    <div id="seger" class="overlagg gomd">
+      <div id="konfetti"></div>
+      <div class="ruta">
+        <p class="krona">🦄</p>
+        <h1>Du räddade enhörningen!</h1>
+        <p class="berattelse">Prinsessan Moa är en riktig hjältinna!<br />Nu är hon och enhörningen bästa vänner för alltid. 💖</p>
+        <p id="segerStats"></p>
+        <button id="spelaIgen">Spela igen 🔁</button>
+        <p><a class="portalLank" href="../">← Tillbaka till Moas spel</a></p>
+      </div>
+    </div>
+
+    <script type="module" src="game.js"></script>
+  </body>
+</html>
