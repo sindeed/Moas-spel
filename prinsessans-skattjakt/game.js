@@ -41,6 +41,7 @@ const spelare = {
   kastAnim: 0,
   knock: new THREE.Vector3(),
   blink: 0,
+  klattra: null,
 };
 
 const fiender = [];      // spöken och slimes
@@ -161,7 +162,7 @@ function inmatning() {
 }
 
 function tryckAttack() {
-  if (!spel.igang || spel.klar || spel.doende) return;
+  if (!spel.igang || spel.klar || spel.doende || spelare.klattra) return;
   if (spelare.sving <= 0) {
     spelare.sving = 0.32;
     spelare.svingTraff = false;
@@ -170,7 +171,7 @@ function tryckAttack() {
 }
 
 function tryckMagi() {
-  if (!spel.igang || spel.klar || spel.doende) return;
+  if (!spel.igang || spel.klar || spel.doende || spelare.klattra) return;
   if (spelare.kastCd <= 0) {
     spelare.kastCd = 0.5;
     spelare.kastAnim = 0.25;
@@ -184,7 +185,7 @@ function tryckMagi() {
 }
 
 function tryckHopp() {
-  if (!spel.igang || spel.klar || spel.doende) return;
+  if (!spel.igang || spel.klar || spel.doende || spelare.klattra) return;
   if (!spelare.iLuften) {
     spelare.vy = 9.5;
     spelare.iLuften = true;
@@ -201,6 +202,11 @@ function kopplaStyrning() {
     if (['ShiftLeft', 'ShiftRight', 'KeyC'].includes(e.code)) tryckHopp();
   });
   window.addEventListener('keyup', (e) => tangenter.delete(e.code));
+
+  // iOS kan pausa ljudet vid samtal/flikbyte — väck det vid nästa tryck
+  window.addEventListener('pointerdown', () => {
+    if (ljud.ctx && ljud.ctx.state !== 'running') ljud.ctx.resume();
+  });
 
   const duk = renderare.domElement;
   duk.addEventListener('pointerdown', (e) => { if (e.button === 0 && !arTouch) tryckAttack(); });
@@ -223,6 +229,7 @@ function kopplaStyrning() {
       styrspak.y = dy / max;
     };
     zon.addEventListener('pointerdown', (e) => {
+      if (styrspak.aktiv) return; // första fingret äger spaken tills det släpps
       styrspak.aktiv = true; styrspak.id = e.pointerId;
       zon.setPointerCapture(e.pointerId);
       uppdateraSpak(e);
@@ -230,7 +237,8 @@ function kopplaStyrning() {
     zon.addEventListener('pointermove', (e) => { if (styrspak.aktiv && e.pointerId === styrspak.id) uppdateraSpak(e); });
     const slappSpak = (e) => {
       if (e.pointerId !== styrspak.id) return;
-      styrspak.aktiv = false; styrspak.x = 0; styrspak.y = 0;
+      styrspak.aktiv = false; styrspak.id = null;
+      styrspak.x = 0; styrspak.y = 0;
       knopp.style.transform = 'translate(0px, 0px)';
     };
     zon.addEventListener('pointerup', slappSpak);
@@ -241,7 +249,10 @@ function kopplaStyrning() {
   }
 }
 
-const arTouch = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
+// iPad/surfplatta/mobil — även iPadOS i "skrivbordsläge" (maxTouchPoints) och
+// enheter där pekskärmen är primär (pointer: coarse)
+const arTouch = 'ontouchstart' in window || navigator.maxTouchPoints > 0 ||
+  (window.matchMedia && window.matchMedia('(pointer: coarse)').matches);
 
 // ---------- Skada och strid ----------
 function normaliseraVinkel(a) {
@@ -290,7 +301,7 @@ function skadaFiende(f, n) {
 }
 
 function taSkada(fran) {
-  if (spel.osarbar > 0 || spel.doende || spel.klar || !spel.igang) return;
+  if (spel.osarbar > 0 || spel.doende || spel.klar || !spel.igang || spelare.klattra) return;
   spel.hjartan--;
   uppdateraHjartan();
   ljud.aj();
@@ -424,7 +435,7 @@ function init() {
   const sol = new THREE.DirectionalLight(0xfff2dd, 1.7);
   sol.position.set(35, 55, 25);
   sol.castShadow = true;
-  sol.shadow.mapSize.set(2048, 2048);
+  sol.shadow.mapSize.set(arTouch ? 1024 : 2048, arTouch ? 1024 : 2048);
   sol.shadow.camera.left = -80; sol.shadow.camera.right = 80;
   sol.shadow.camera.top = 80; sol.shadow.camera.bottom = -80;
   sol.shadow.camera.far = 160;
@@ -532,10 +543,101 @@ function init() {
   window.__moa = { spel, spelare, boss, fiender, varld, foremal, skadaBoss, taSkada, tillVarld, tangenter, inmatning, klocka, steg };
 }
 
+// ---------- Klättring på stegen ----------
+function uppdateraKlattring(dt, t) {
+  const kl = spelare.klattra;
+  const st = varld.stege;
+  const pos = spelare.grupp.position;
+  kl.tid += dt;
+  // LAND ligger utanför kollisionsradien (2.72) så Moa aldrig fastnar mot muren
+  const HOJD = 3.9, FACE = 2.6, LAND = 2.85, KLAR = 2.4;
+  // Nyckelpunkter: [tid, läge längs klätterleden, höjd]
+  const punkter = [
+    [0.0, kl.franRel, 0],
+    [0.3, -FACE * kl.sida, 0],
+    [1.4, -FACE * kl.sida, HOJD],
+    [1.9, FACE * kl.sida, HOJD],
+    [KLAR, LAND * kl.sida, 0],
+  ];
+  let rel = LAND * kl.sida, y = 0;
+  for (let i = 1; i < punkter.length; i++) {
+    if (kl.tid <= punkter[i][0]) {
+      const [t0, a0, y0] = punkter[i - 1];
+      const [t1, a1, y1] = punkter[i];
+      const p = (kl.tid - t0) / (t1 - t0);
+      rel = a0 + (a1 - a0) * p;
+      y = y0 + (y1 - y0) * p;
+      break;
+    }
+  }
+  if (st.axelX) {
+    pos.x = st.pos.x + rel;
+    pos.z += (st.pos.z - pos.z) * Math.min(1, 8 * dt);
+  } else {
+    pos.z = st.pos.z + rel;
+    pos.x += (st.pos.x - pos.x) * Math.min(1, 8 * dt);
+  }
+  spelare.y = y;
+  spelare.vy = 0;
+  spelare.grupp.position.y = y;
+  // Titta mot muren och klättra med armarna växelvis
+  spelare.vinkel = st.axelX
+    ? (kl.sida > 0 ? Math.PI / 2 : -Math.PI / 2)
+    : (kl.sida > 0 ? 0 : Math.PI);
+  spelare.grupp.rotation.y = spelare.vinkel;
+  const { armL, armR, modell, svard } = spelare.delar;
+  armR.rotation.x = -1.7 + Math.sin(t * 9) * 0.55;
+  armR.rotation.z = 0; // ifall klättringen började mitt i ett svärdssving
+  armL.rotation.x = -1.7 - Math.sin(t * 9) * 0.55;
+  modell.visible = true;
+  svard.visible = false; // svärdet i "skidan" medan hon klättrar
+  kl.ljudTid -= dt;
+  if (kl.ljudTid <= 0 && kl.tid < 1.9) {
+    kl.ljudTid = 0.33;
+    ljud.klattra();
+  }
+  if (kl.tid >= KLAR) {
+    spelare.klattra = null;
+    spelare.y = 0;
+    spelare.grupp.position.y = 0;
+    svard.visible = true;
+    spel.osarbar = 0.8; // skyddstid ifall en fiende väntar vid landningen
+    explosion(pos.clone().setY(0.1), 0xffd9ec, 6, 2.5, 0.08, 0.35, 4);
+    ljud.hopp();
+  }
+}
+
 // ---------- Uppdateringar per bildruta ----------
 function uppdateraSpelare(dt, t) {
   const pos = spelare.grupp.position;
   const rikt = inmatning();
+
+  // På stegen? Då sköter klättringen allt
+  if (spelare.klattra) {
+    uppdateraKlattring(dt, t);
+    return;
+  }
+
+  // Kan Moa börja klättra? (står vid stegen och trycker mot muren)
+  const st = varld.stege;
+  if (st && !spelare.iLuften && !spel.doende && !spel.klar) {
+    if (!spel.stegeTips && planAvstand(pos, st.pos) < 7) {
+      spel.stegeTips = true;
+      meddelande('En stege! 🪜 Gå rakt mot den så klättrar Moa över muren!', 3.5);
+    }
+    const rel = st.axelX ? pos.x - st.pos.x : pos.z - st.pos.z;
+    const tvars = st.axelX ? pos.z - st.pos.z : pos.x - st.pos.x;
+    const tryckMot = st.axelX ? rikt.x : rikt.y;
+    if (Math.abs(tvars) < 1.35 && Math.abs(rel) > 1.9 && Math.abs(rel) < 3.2 &&
+        tryckMot * -Math.sign(rel) > 0.3) {
+      spelare.klattra = { tid: 0, sida: -Math.sign(rel), franRel: rel, ljudTid: 0 };
+      spelare.knock.set(0, 0, 0);
+      spelare.sving = 0;
+      uppdateraKlattring(0, t);
+      return;
+    }
+  }
+
   const fart = spelare.fart * (spelare.iLuften ? 1.3 : 1);
 
   let dx = rikt.x * fart * dt;
@@ -868,9 +970,9 @@ function uppdateraKamera(dt, t) {
     return;
   }
   const pos = spelare.grupp.position;
-  kameraMal.set(pos.x, 15.5, pos.z + 13.5);
+  kameraMal.set(pos.x, 15.5 + spelare.y * 0.6, pos.z + 13.5);
   kamera.position.lerp(kameraMal, 1 - Math.pow(0.0001, dt));
-  kamera.lookAt(pos.x, 1.2, pos.z - 1.5);
+  kamera.lookAt(pos.x, 1.2 + spelare.y * 0.7, pos.z - 1.5);
 }
 
 // ---------- Huvudloopen ----------

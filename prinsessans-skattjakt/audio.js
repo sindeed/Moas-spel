@@ -233,6 +233,13 @@ export class Ljud {
     this._ton(this._nu(), 300, 0.13, 'sine', 0.14, this.sfx, null, 640);
   }
 
+  klattra() {
+    if (!this.ctx) return;
+    const t = this._nu();
+    this._ton(t, 290 + Math.random() * 50, 0.07, 'triangle', 0.1, this.sfx);
+    this._ton(t + 0.09, 370 + Math.random() * 50, 0.07, 'triangle', 0.08, this.sfx);
+  }
+
   traff() {
     if (!this.ctx) return;
     this._ton(this._nu(), 240, 0.08, 'square', 0.14, this.sfx, 1200, 150);

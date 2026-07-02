@@ -6,7 +6,8 @@ export const TILE = 4;
 
 // Moas karta översatt till rutnät:
 // # = mur   . = golv   P = prinsessan Moa   H = hjärta   K = nyckel
-// D = låst dörr   G = spöke   S = slime   B = draken   U = enhörningen   F = blomman
+// D = låst dörr   G = spöke   S = slime   B = draken   U = enhörningen
+// F = blomman   L = stegen (går att klättra över muren där!)
 export const KARTA = [
   '##########################',
   '#.....#......H.....#..U..#',
@@ -16,7 +17,7 @@ export const KARTA = [
   '#.................####D###',
   '#..........#...#..#......#',
   '#..........#.H.#..#...H..#',
-  '#...G......#...#..#......#',
+  '#...G......L...#..#......#',
   '#..........#...#..D......#',
   '#..........#.K.#..#..G...#',
   '#..S.......#...#..#......#',
@@ -188,6 +189,27 @@ function byggFjaril(i) {
   return grupp;
 }
 
+function byggStege() {
+  // En gyllene stege med sidor och tvärpinnar, precis som på Moas teckning
+  const grupp = new THREE.Group();
+  const GULD = toon(0xffcf5c);
+  const TRA = toon(0xd98f4e);
+  for (const sida of [-1, 1]) {
+    const balk = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.08, 4.1, 8), GULD);
+    balk.position.set(0, 2.0, sida * 0.45);
+    balk.castShadow = true;
+    grupp.add(balk);
+  }
+  for (let i = 0; i < 6; i++) {
+    const pinne = new THREE.Mesh(new THREE.CylinderGeometry(0.055, 0.055, 0.92, 8), TRA);
+    pinne.rotation.x = Math.PI / 2;
+    pinne.position.set(0, 0.55 + i * 0.62, 0);
+    pinne.castShadow = true;
+    grupp.add(pinne);
+  }
+  return grupp;
+}
+
 function byggDorr(vertikal) {
   // Gyllene port med rosa galler som glider upp när den låses upp
   const grupp = new THREE.Group();
@@ -235,6 +257,7 @@ export function byggVarld(scen) {
     moln: [],
     fjarilar: [],
     blomma: null,
+    stege: null,
   };
 
   // Läs kartan
@@ -242,7 +265,7 @@ export function byggVarld(scen) {
     info.solid.push([]);
     for (let k = 0; k < KOLUMNER; k++) {
       const c = KARTA[r][k];
-      info.solid[r].push(c === '#');
+      info.solid[r].push(c === '#' || c === 'L');
       const pos = tillVarld(k, r);
       if (c === 'P') info.start = pos;
       if (c === 'H') info.hjartan.push(pos);
@@ -253,6 +276,11 @@ export function byggVarld(scen) {
       if (c === 'U') info.enhorningPos = pos;
       if (c === 'D') info.dorrar.push({ kol: k, rad: r });
       if (c === 'F') info.blommaPos = pos;
+      if (c === 'L') {
+        // Klättra i x-led om muren löper i nord–sydlig riktning
+        const axelX = KARTA[r][k - 1] !== '#' || KARTA[r][k + 1] !== '#';
+        info.stege = { kol: k, rad: r, pos, axelX };
+      }
     }
   }
   // Dörrar är solida tills de öppnas
@@ -281,7 +309,7 @@ export function byggVarld(scen) {
   const murTiles = [];
   for (let r = 0; r < RADER; r++) {
     for (let k = 0; k < KOLUMNER; k++) {
-      if (KARTA[r][k] === '#') murTiles.push([k, r]);
+      if (KARTA[r][k] === '#' || KARTA[r][k] === 'L') murTiles.push([k, r]);
     }
   }
   const murGeo = new THREE.BoxGeometry(TILE, 3.2, TILE);
@@ -322,6 +350,23 @@ export function byggVarld(scen) {
     d.oppen = false;
     d.animation = 0;
     d.meddelandeTid = 0;
+  }
+
+  // Stegen — en på varje sida av muren så Moa kan klättra både upp och ner
+  if (info.stege) {
+    for (const sida of [-1, 1]) {
+      const stege = byggStege();
+      const lut = 0.08;
+      if (info.stege.axelX) {
+        stege.position.set(info.stege.pos.x + sida * 2.55, 0, info.stege.pos.z);
+        stege.rotation.z = sida * lut;
+      } else {
+        stege.rotation.y = Math.PI / 2;
+        stege.position.set(info.stege.pos.x, 0, info.stege.pos.z + sida * 2.55);
+        stege.rotation.x = -sida * lut;
+      }
+      scen.add(stege);
+    }
   }
 
   // Moln som seglar förbi
