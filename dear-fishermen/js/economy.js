@@ -170,7 +170,7 @@ function buildShopDom(G) {
 function refreshShop(G) {
   if (!els) return;
   const w = G.time?.week ?? 1, d = G.time?.day ?? 1;
-  els.title.textContent = `🛒 Harbor Shop — Week ${w} Day ${d}`;
+  els.title.textContent = `🛒 Port Johnson Shop — Week ${w} Day ${d}`;
   els.money.textContent = `🪙 ${G.money || 0}`;
 
   // Sell button (non-destructive appraisal — takeAllValue only on actual sell)

@@ -6,6 +6,7 @@ import * as THREE from '../lib/three.module.min.js'; // (contract consistency)
 
 let G = null;
 let root = null, canvas = null, ctx = null, visible = false;
+let questLine = null;
 let sightings = [];        // [{x, z, week, day}] — where the leviathan surfaced
 const WORLD = 700;         // map covers world coords [-WORLD, +WORLD]
 const SIZE = 480;          // canvas px
@@ -52,7 +53,10 @@ function buildDom() {
   ctx = canvas.getContext('2d');
   const legend = document.createElement('p');
   legend.style.cssText = 'font-size:13px;opacity:0.9;margin:8px 0 6px;line-height:1.5;';
-  legend.innerHTML = '▲ you · ⚓ harbor · 🐟 fish (more fish = better!) · 🌫️ cursed fog · 🐉 leviathan seen here';
+  legend.innerHTML = '▲ you · ⚓ Port Johnson · 🐟 fish (more fish = better!) · 🌫️ cursed fog · 🐉 leviathan seen here';
+  questLine = document.createElement('p');
+  questLine.style.cssText = 'font-size:15px;font-weight:700;color:var(--sun);margin:0 0 8px;';
+  questLine.textContent = '';
   const close = document.createElement('button');
   close.textContent = 'Back to the boat ⛵';
   close.className = 'primary';
@@ -60,7 +64,7 @@ function buildDom() {
     'font-family:inherit;font-weight:700;font-size:16px;cursor:pointer;border:0;border-radius:999px;' +
     'padding:10px 22px;background:var(--sun);color:var(--ink);min-height:48px;';
   close.addEventListener('click', hide);
-  panel.append(h, canvas, legend, close);
+  panel.append(h, questLine, canvas, legend, close);
   root.appendChild(panel);
   document.body.appendChild(root);
 }
@@ -88,6 +92,10 @@ function emoji(txt, x, z, size = 16) {
 
 function draw() {
   if (!ctx) return;
+  if (questLine) {
+    questLine.textContent = G.quest?.label
+      || 'No quest — moor at Port Johnson and press T to talk to Old Maja! 👵';
+  }
   const hb = G.consts?.HARBOR || { x: 0, z: 60 };
   const scale = SIZE / (2 * WORLD);
   ctx.clearRect(0, 0, SIZE, SIZE);
@@ -104,9 +112,13 @@ function draw() {
   emoji('🌫️', -480, -480, 26);
   if ((G.time?.week || 1) >= 2 && !sightings.length) emoji('❓', -420, -380, 18);
 
-  // harbor island
+  // harbor island — PORT JOHNSON (named by the designer himself)
   emoji('🏝️', hb.x, hb.z + 26, 20);
   emoji('⚓', hb.x, hb.z - 8, 16);
+  ctx.font = 'bold 13px sans-serif';
+  ctx.fillStyle = '#ffe9a8';
+  ctx.textAlign = 'center';
+  ctx.fillText('PORT JOHNSON', px(hb.x), py(hb.z) + 34);
 
   // fish hotspots (more fish drawn = better fishing there)
   emoji('🐟', 150, -60, 13); emoji('🐟', -120, 140, 13);                   // coast: a little

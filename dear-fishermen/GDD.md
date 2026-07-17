@@ -36,7 +36,8 @@ Vibes: **epic & intense** + **creepy & mysterious** (nights, fog) + **funny & ch
 5. Survive to dawn → new day. Day 21 dawn → **RETIRE (victory)** or **CONTINUE LEGACY** (endless).
 
 ### Zones (by distance from harbor, world units)
-- **Harbor** (dock at world origin area, safe): shop opens when moored.
+- **Harbor — PORT JOHNSON** (home island, safe): fishing village with cottages, market stall,
+  lighthouse, notice board and islander NPCs with side quests (Old Maja 👵). Shop opens when moored.
 - **Coast** (< 220): calm, small cheap fish.
 - **Open Sea** (220–520): medium fish, storms possible.
 - **The Deep** (> 520): big fish, sharks, megalodon territory.

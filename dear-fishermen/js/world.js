@@ -63,7 +63,7 @@ let skyGroup, sunMesh, moonMesh, starPoints, starMat;
 let hemiLight, dirLight, flashLight;
 let rainPoints, rainMat, rainPos;
 let wispGroup, wispOrbs = [], wispLights = [], wispMat;
-let beamGroup, beamMat, windowMat, hutLight;
+let beamGroup, beamMat, windowMat, hutLight, lampMat;
 let buoys = [];
 let lastOceanT = -1, lastCX = 1e9, lastCZ = 1e9;
 
@@ -84,6 +84,8 @@ const C_GROUND_NIGHT = new THREE.Color(0x0a1626);
 const C_SUN_WARM = new THREE.Color(0xfff0cf);
 const C_SUN_LOW = new THREE.Color(0xffa04d);
 const C_MOON = new THREE.Color(0x93aeff);
+const C_LAMP_DAY = new THREE.Color(0xcfc9b8);
+const C_LAMP_NIGHT = new THREE.Color(0xffd873);
 
 function clamp01(x) { return x < 0 ? 0 : x > 1 ? 1 : x; }
 function ss(a, b, x) { x = clamp01((x - a) / (b - a)); return x * x * (3 - 2 * x); }
@@ -397,6 +399,216 @@ function buildHarbor(scene) {
     scene.add(bg);
     buoys.push({ g: bg, x: bx, z: bz, phase: i * 1.7 });
   }
+
+  buildVillage(h, wood, woodDark);
+}
+
+// ---------------------------------------------- fishing village (Islands update)
+// Cheap analytic island surface matching the mound + grass cylinders (world coords).
+function islandGroundY(x, z) {
+  const dx = x - HARBOR.x, dz = z - HARBOR.z;
+  const d = Math.sqrt(dx * dx + dz * dz);
+  if (d < 15) return 3.4;                         // grass top
+  if (d < 19) return 3.4 - 0.9 * ((d - 15) / 4);  // grass rim down to the sand ring
+  if (d < 30) return 2.5 - 7.0 * ((d - 19) / 11); // beach slope into the sea
+  return -4.5;                                    // underwater — off the island
+}
+
+function buildVillage(h, wood, woodDark) {
+  const dummy = new THREE.Object3D();
+  const gy = (lx, lz) => islandGroundY(HARBOR.x + lx, HARBOR.z + lz);
+  const M = (x, y, z, ry = 0, s = null, rx = 0, rz = 0) => {
+    dummy.position.set(x, y, z);
+    dummy.rotation.set(rx, ry, rz);
+    if (s) dummy.scale.set(s[0], s[1], s[2]); else dummy.scale.set(1, 1, 1);
+    dummy.updateMatrix();
+    return dummy.matrix.clone();
+  };
+  const inst = (parent, geo, mat, mats) => {
+    const im = new THREE.InstancedMesh(geo, mat, mats.length);
+    for (let i = 0; i < mats.length; i++) im.setMatrixAt(i, mats[i]);
+    im.computeBoundingSphere?.();
+    parent.add(im);
+    return im;
+  };
+  const white = toon(0xf6f2e8);
+  const blue = toon(0x5b7fb8);
+  const postM = []; // every wooden pole in the village shares ONE instanced mesh
+
+  // --- 3 cottages in a half-circle facing the dock (windows reuse windowMat → night glow, no lights)
+  const wallGeo = new THREE.BoxGeometry(4.6, 3.2, 4.0);
+  const cRoofGeo = new THREE.ConeGeometry(3.6, 2.4, 4);
+  const roofMat = toon(0x6b4a33);
+  const doorM = [], winM = [], wboxM = [], chimM = [];
+  for (const [cx, cz, ry, mat] of [
+    [-9, -8, -0.3, toon(0xc94f43)],   // red
+    [0.5, -10.5, 0.05, toon(0xd9a441)], // ochre
+    [9, -7.5, 0.35, blue],            // blue
+  ]) {
+    const walls = new THREE.Mesh(wallGeo, mat);
+    walls.position.set(cx, 5.0, cz); walls.rotation.y = ry;
+    h.add(walls);
+    const roof = new THREE.Mesh(cRoofGeo, roofMat);
+    roof.position.set(cx, 7.8, cz); roof.rotation.y = ry + Math.PI / 4;
+    h.add(roof);
+    const hm = M(cx, 3.4, cz, ry); // cottage frame on the grass
+    doorM.push(M(-0.85, 1.0, -2.06).premultiply(hm));
+    winM.push(M(1.2, 2.1, -2.02, Math.PI).premultiply(hm));
+    wboxM.push(M(1.2, 1.42, -2.22).premultiply(hm));
+    chimM.push(M(-1.3, 4.1, 0.8).premultiply(hm));
+  }
+  inst(h, new THREE.BoxGeometry(1.1, 2.0, 0.16), white, doorM);
+  inst(h, new THREE.PlaneGeometry(1.15, 1.15), windowMat, winM);
+  inst(h, new THREE.BoxGeometry(1.5, 0.34, 0.4), white, wboxM);
+  inst(h, new THREE.BoxGeometry(0.7, 1.4, 0.7), woodDark, chimM);
+
+  // --- market stall near the dock (striped awning + crate of fish)
+  const stall = new THREE.Group();
+  stall.position.set(6.2, gy(6.2, -16.5), -16.5);
+  stall.rotation.y = 0.5;
+  h.add(stall);
+  const counter = new THREE.Mesh(new THREE.BoxGeometry(3.0, 1.0, 1.2), wood);
+  counter.position.y = 0.5;
+  stall.add(counter);
+  const crate = new THREE.Mesh(new THREE.BoxGeometry(1.0, 0.5, 0.7), woodDark);
+  crate.position.set(0.2, 1.25, 0.05); crate.rotation.y = 0.15;
+  stall.add(crate);
+  const awnGeo = new THREE.BoxGeometry(0.82, 0.08, 1.8);
+  const awnRed = [], awnCream = [];
+  for (let i = 0; i < 4; i++) {
+    (i % 2 ? awnCream : awnRed).push(M(-1.23 + i * 0.82, 2.55, 0.15, 0, null, 0.18));
+  }
+  inst(stall, awnGeo, toon(0xe5484d), awnRed);
+  inst(stall, awnGeo, white, awnCream);
+  const stallM = M(6.2, gy(6.2, -16.5), -16.5, 0.5);
+  postM.push(
+    M(-1.35, 1.3, -0.5, 0, [0.8, 2.6, 0.8]).premultiply(stallM),
+    M(1.35, 1.3, -0.5, 0, [0.8, 2.6, 0.8]).premultiply(stallM));
+
+  // --- fish shapes: 3 in the stall crate + 4 on the drying rack (one instanced mesh)
+  const fishMat = toon(0x9fb7c4);
+  const fishM = [
+    M(0.05, 1.58, -0.02, 0.4, [1.5, 0.5, 0.65]).premultiply(stallM),
+    M(0.35, 1.58, 0.12, -0.5, [1.5, 0.5, 0.65]).premultiply(stallM),
+    M(0.15, 1.7, 0.03, 1.2, [1.4, 0.45, 0.6]).premultiply(stallM),
+  ];
+  postM.push(M(-5.6, 4.5, -4.5, 0, [0.8, 2.2, 0.8]), M(-3.4, 4.5, -4.5, 0, [0.8, 2.2, 0.8]));
+  const bar = new THREE.Mesh(new THREE.BoxGeometry(2.6, 0.14, 0.14), woodDark);
+  bar.position.set(-4.5, 5.45, -4.5);
+  h.add(bar);
+  for (let i = 0; i < 4; i++) {
+    fishM.push(M(-5.25 + i * 0.5, 4.98, -4.5, 0.3 * (i % 2), [0.55, 1.35, 0.4]));
+  }
+  inst(h, new THREE.SphereGeometry(0.34, 6, 5), fishMat, fishM);
+
+  // --- winding sand path: dock start → cottages (instanced flat patches)
+  const PATH = [
+    [0, -19.4, 0.1], [-0.8, -17.2, -0.3], [-0.3, -15.0, 0.25], [0.8, -13.0, 0.15],
+    [0.3, -11.0, -0.1], [-3.2, -9.6, 0.5], [-6.3, -8.6, 0.3], [4.6, -9.0, -0.5], [7.2, -8.2, -0.3],
+  ];
+  inst(h, new THREE.BoxGeometry(2.3, 0.14, 1.7), toon(0xf7e7ae),
+    PATH.map(([x, z, ry]) => M(x, gy(x, z) + 0.07, z, ry)));
+
+  // --- 4 lamp posts along the path (glow-material heads, no extra lights)
+  lampMat = new THREE.MeshBasicMaterial({ color: 0xcfc9b8 });
+  const lampM = [];
+  for (const [x, z] of [[-2.2, -17.5], [2.2, -13.5], [-2.6, -10.8], [3.4, -9.0]]) {
+    const y = gy(x, z);
+    postM.push(M(x, y + 1.6, z, 0, [0.85, 3.2, 0.85]));
+    lampM.push(M(x, y + 3.4, z));
+  }
+  inst(h, new THREE.SphereGeometry(0.34, 8, 6), lampMat, lampM);
+
+  // --- rope fence along both dock edges (posts + sagging Line rope)
+  const ropeMat = new THREE.LineBasicMaterial({ color: 0xd9c08a });
+  for (const sx of [-2.75, 2.75]) {
+    const zs = [-23, -30, -37, -44];
+    const pts = [];
+    for (let i = 0; i < zs.length; i++) {
+      postM.push(M(sx, 2.9, zs[i], 0, [0.8, 1.1, 0.8]));
+      pts.push(new THREE.Vector3(sx, 3.38, zs[i]));
+      if (i < zs.length - 1) pts.push(new THREE.Vector3(sx, 3.08, (zs[i] + zs[i + 1]) / 2));
+    }
+    h.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), ropeMat));
+  }
+
+  // --- beached rowboat on the sand
+  const row = new THREE.Group();
+  row.position.set(-13, gy(-13, -14) + 0.35, -14);
+  row.rotation.set(0.06, 0.7, 0.08);
+  h.add(row);
+  row.add(new THREE.Mesh(new THREE.BoxGeometry(3.4, 0.8, 1.5), blue));
+  const bench = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.16, 1.3), wood);
+  bench.position.set(0.3, 0.42, 0);
+  row.add(bench);
+
+  // --- 2 barrel clusters
+  inst(h, new THREE.CylinderGeometry(0.5, 0.55, 1.1, 8), woodDark, [
+    [-3.9, -16.1], [-3.1, -16.9], [-3.6, -15.4], [8.5, -13.3], [9.3, -13.9], [8.8, -14.6],
+  ].map(([x, z], i) => M(x, gy(x, z) + 0.55, z, i * 0.9)));
+
+  // --- scattered flowers on the grass (instanced, per-instance colors)
+  const petals = [0xff8fb3, 0xffd23e, 0xf6f2e8, 0xb48cff];
+  const AVOID = [
+    [-9, -8, 3.4], [0.5, -10.5, 3.4], [9, -7.5, 3.4],   // cottages
+    [-8, 8, 4.6], [10, 9, 3.6], [-4.5, -4.5, 2.2],      // hut, lighthouse, rack
+    ...PATH.map(([x, z]) => [x, z, 1.7]),
+  ];
+  const flowers = new THREE.InstancedMesh(new THREE.SphereGeometry(0.18, 6, 5), toon(0xffffff), 20);
+  let fi = 0, guard = 0;
+  while (fi < 20 && guard++ < 300) {
+    const a = G.rng() * Math.PI * 2, r = 4.5 + G.rng() * 9;
+    const x = Math.cos(a) * r, z = Math.sin(a) * r;
+    let bad = false;
+    for (const [ax, az, ad] of AVOID) {
+      if ((x - ax) * (x - ax) + (z - az) * (z - az) < ad * ad) { bad = true; break; }
+    }
+    if (bad) continue;
+    flowers.setMatrixAt(fi, M(x, 3.5, z, 0, [1, 0.7, 1]));
+    flowers.setColorAt(fi, tmpC1.setHex(petals[fi % petals.length]));
+    fi++;
+  }
+  flowers.count = fi;
+  if (flowers.instanceColor) flowers.instanceColor.needsUpdate = true;
+  flowers.computeBoundingSphere?.();
+  h.add(flowers);
+
+  // --- 2 seagulls perched on the dock-end bollards
+  const gullM = [], wingM = [];
+  for (const [gx, ry] of [[2.4, 2.6], [-2.4, -2.1]]) {
+    const gm = M(gx, 4.1, -45, ry);
+    gullM.push(M(0, 0, 0, 0, [1, 0.85, 1.3]).premultiply(gm));
+    wingM.push(M(0.36, 0.02, -0.05, 0, null, 0, 0.25).premultiply(gm));
+    wingM.push(M(-0.36, 0.02, -0.05, 0, null, 0, -0.25).premultiply(gm));
+  }
+  inst(h, new THREE.SphereGeometry(0.4, 7, 6), white, gullM);
+  inst(h, new THREE.BoxGeometry(0.5, 0.06, 0.34), toon(0xcfd6dc), wingM);
+
+  // --- quest notice board beside the dock start (quests.js reads G.island)
+  const by = gy(-4.6, -19);
+  const bGroup = new THREE.Group();
+  bGroup.position.set(-4.6, by, -19); bGroup.rotation.y = 0.25;
+  h.add(bGroup);
+  const board = new THREE.Mesh(new THREE.BoxGeometry(2.3, 1.5, 0.14), wood);
+  board.position.y = 2.0;
+  bGroup.add(board);
+  const paper = new THREE.Mesh(new THREE.PlaneGeometry(0.85, 1.0), white);
+  paper.position.set(-0.1, 2.0, -0.09); paper.rotation.y = Math.PI;
+  bGroup.add(paper);
+  const bm = M(-4.6, by, -19, 0.25);
+  postM.push(
+    M(-0.75, 1.45, 0, 0, [0.8, 2.9, 0.8]).premultiply(bm),
+    M(0.75, 1.45, 0, 0, [0.8, 2.9, 0.8]).premultiply(bm));
+
+  // all wooden poles in one draw call
+  inst(h, new THREE.CylinderGeometry(0.13, 0.15, 1, 6), woodDark, postM);
+
+  // --- contract for quests.js (world coordinates)
+  G.island = {
+    dockEnd: { x: HARBOR.x, z: HARBOR.z - 45 },                      // seaward dock tip
+    boardPos: { x: HARBOR.x - 4.6, y: by + 2.0, z: HARBOR.z - 19 },  // notice-board center
+    groundY: islandGroundY,                                          // (x,z) -> island surface y
+  };
 }
 
 // ------------------------------------------------------------- init
@@ -664,6 +876,8 @@ function updateHarbor(dt) {
   const { nightF } = frame;
   windowMat.opacity = 0.2 + nightF * 0.8;
   hutLight.intensity = nightF * 1.2;
+  if (lampMat) lampMat.color.copy(C_LAMP_DAY).lerp(C_LAMP_NIGHT, nightF); // lamp heads warm up at night
+
   beamGroup.rotation.y += dt * 0.5;
   beamMat.opacity = nightF * 0.4;
   const t = G.time.total;

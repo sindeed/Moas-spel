@@ -50,7 +50,7 @@ let B = null;          // shortcut to G.boat
 let group = null;
 let wheelStation = null, cannonStation = null;
 let yawPivot = null, pitchPivot = null, muzzle = null, barrel = null;
-let lantern = null, waterPlane = null, stackTip = null, fireLight = null;
+let lantern = null, waterPlane = null, stackTip = null, fireLight = null, radarBar = null;
 let leaks = [], fires = [], props = [];
 let leakSeq = 0, fireSeq = 0;
 let cannonCd = 0, recoil = 0;
@@ -90,12 +90,16 @@ export function init(G) {
 
   makeMaterials();
   buildHull();
-  buildCabin();
+  buildWheelhouse();
   buildMast();
   buildEngine();
+  buildGantry();
+  buildDeckDressing();
   buildRailings();
   buildCannon();
   buildStationProps();
+  buildRigging();
+  flushBatches();
   buildWaterPlane();
   buildProps();
   buildPools(G);
@@ -163,7 +167,13 @@ function makeMaterials() {
   M.flameO = toon(0xff7a1a, { transparent: true, opacity: 0.9 });
   M.flameY = toon(0xffd23a, { transparent: true, opacity: 0.9 });
   M.bolt = toon(0x3d434a);
+  M.blue = toon(0x2f6fd1);     // fish crates
+  M.net = toon(0x47694b);      // fishing-net green
+  M.buoy = toon(0xe8862f);     // orange fenders
   M.glow = new THREE.MeshBasicMaterial({ color: 0xffd98a });
+  M.navR = new THREE.MeshBasicMaterial({ color: 0xff3b30 });
+  M.navG = new THREE.MeshBasicMaterial({ color: 0x30d158 });
+  M.line = new THREE.LineBasicMaterial({ color: 0x3a4046 });
 
   GEO.flame = new THREE.ConeGeometry(0.22, 0.7, 6);
   GEO.puddle = new THREE.CircleGeometry(0.5, 12);
@@ -171,7 +181,9 @@ function makeMaterials() {
   GEO.spray = new THREE.ConeGeometry(0.16, 0.9, 6);
   GEO.puff = new THREE.SphereGeometry(0.28, 6, 5);
   GEO.bolt = new THREE.CylinderGeometry(0.06, 0.06, 1.1, 5);
-  GEO.post = new THREE.BoxGeometry(0.1, 0.55, 0.1);
+  GEO.unit = new THREE.BoxGeometry(1, 1, 1);
+  GEO.porthole = new THREE.CylinderGeometry(0.14, 0.14, 0.1, 10);
+  GEO.fender = new THREE.CylinderGeometry(0.17, 0.17, 0.45, 7);
   GEO.crate = new THREE.BoxGeometry(0.7, 0.7, 0.7);
   GEO.barrel = new THREE.CylinderGeometry(0.34, 0.34, 0.8, 8);
   GEO.bucket = new THREE.CylinderGeometry(0.22, 0.16, 0.3, 8);
@@ -184,9 +196,39 @@ function box(w, h, d, mat, x, y, z) {
   return m;
 }
 
+// Batched unit-box instances grouped per material — flushed to ONE InstancedMesh
+// per material. Lets the trawler carry lots of little details for very few draw calls.
+const BATCH = {};
+function bat(mat, sx, sy, sz, x, y, z, rx, ry, rz) {
+  (BATCH[mat] || (BATCH[mat] = [])).push([sx, sy, sz, x, y, z, rx, ry, rz]);
+}
+function makeInstanced(geo, mat, items) {
+  const inst = new THREE.InstancedMesh(geo, mat, items.length);
+  const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), e = new THREE.Euler();
+  items.forEach((it, i) => {
+    e.set(it[6] || 0, it[7] || 0, it[8] || 0);
+    _a.set(it[3], it[4], it[5]);
+    _b.set(it[0], it[1], it[2]);
+    m4.compose(_a, q.setFromEuler(e), _b);
+    inst.setMatrixAt(i, m4);
+  });
+  inst.instanceMatrix.needsUpdate = true;
+  group.add(inst);
+  return inst;
+}
+function flushBatches() {
+  for (const key of Object.keys(BATCH)) {
+    makeInstanced(GEO.unit, M[key], BATCH[key]);
+    delete BATCH[key];
+  }
+}
+
 function buildHull() {
-  box(5.6, 1.6, 13.0, M.red, 0, 0.2, -0.5);                  // main hull
-  box(5.8, 0.42, 13.2, M.white, 0, 0.78, -0.5);              // white stripe band
+  // real trawler profile — still the loved red + white
+  bat('red', 5.6, 1.6, 13.0, 0, 0.2, -0.5);                  // main hull
+  bat('white', 5.8, 0.42, 13.2, 0, 0.78, -0.5);              // white stripe band
+  bat('dark', 5.92, 0.12, 13.3, 0, 0.45, -0.5);              // rub rail stripe
+  bat('dark', 0.28, 0.4, 11.6, 0, -0.5, -0.5);               // keel hint at the waterline
   // pointy bow: a 4-sided cone lying forward
   const bow = new THREE.Mesh(new THREE.ConeGeometry(2.75, 2.6, 4), M.red);
   bow.rotation.x = Math.PI / 2; bow.rotation.y = Math.PI / 4;
@@ -198,32 +240,69 @@ function buildHull() {
   bowStripe.scale.set(1.44, 1, 0.16);
   bowStripe.position.set(0, 0.78, 7.1);
   group.add(bowStripe);
-  box(5.4, 0.16, 13.6, M.wood, 0, 1.07, 0);                  // wooden deck
+  bat('wood', 5.4, 0.16, 13.6, 0, 1.07, 0);                  // wooden deck
   // a few darker plank lines (cheap detail)
-  for (let i = -2; i <= 2; i++) box(0.06, 0.17, 13.6, M.woodDark, i * 1.05, 1.075, 0);
+  for (let i = -2; i <= 2; i++) bat('woodDark', 0.06, 0.17, 13.6, i * 1.05, 1.075, 0);
+  // raised red bulwark along both sides, sweeping up toward the bow, with a wooden gunwale cap
+  const SHEER = -0.107; // sweep angle of the bow sections
+  for (const s of [-1, 1]) {
+    bat('red', 0.14, 0.55, 8.7, s * 2.76, DECK_Y + 0.28, -2.3);            // side bulwark
+    bat('wood', 0.26, 0.09, 8.75, s * 2.74, DECK_Y + 0.6, -2.3);           // gunwale cap rail
+    bat('red', 0.14, 0.55, 4.0, s * 2.76, DECK_Y + 0.48, 3.95, SHEER);     // sheer sweep to the bow
+    bat('wood', 0.26, 0.09, 4.05, s * 2.74, DECK_Y + 0.8, 3.95, SHEER);    // sweeping cap
+  }
+  // round portholes, 4 per side
+  const ph = [];
+  for (const s of [-1, 1]) for (const z of [2.6, 1.0, -0.8, -2.6])
+    ph.push([1, 1, 1, s * 2.82, 0.18, z, 0, 0, Math.PI / 2]);
+  makeInstanced(GEO.porthole, M.dark, ph);
+  // anchor hanging at the port bow (cross of boxes against the bow flare)
+  bat('metalDark', 0.09, 0.78, 0.09, -2.35, 0.5, 6.2, 0, -0.72);   // shank
+  bat('metalDark', 0.56, 0.08, 0.08, -2.35, 0.82, 6.2, 0, -0.72);  // stock
+  bat('metalDark', 0.44, 0.16, 0.08, -2.35, 0.17, 6.2, 0, -0.72);  // flukes
 }
 
-function buildCabin() {
-  // Small open cabin: console + 4 posts + roof, wheel visible in front.
-  box(2.8, 1.1, 0.6, M.wood, 0, DECK_Y + 0.55, -3.0);        // console
-  box(0.14, 1.9, 0.14, M.woodDark, -1.6, DECK_Y + 0.95, -3.9);
-  box(0.14, 1.9, 0.14, M.woodDark, 1.6, DECK_Y + 0.95, -3.9);
-  box(0.14, 1.9, 0.14, M.woodDark, -1.6, DECK_Y + 0.95, -1.9);
-  box(0.14, 1.9, 0.14, M.woodDark, 1.6, DECK_Y + 0.95, -1.9);
-  box(3.8, 0.18, 2.6, M.red, 0, DECK_Y + 1.95, -2.9);        // roof
-  // ship's wheel (visible!)
+function buildWheelhouse() {
+  // Proper little wheelhouse over the console block. The white cabin body sits on
+  // the starboard two-thirds; the port third is an open "bridge wing" under the
+  // same red roof — so the deck fire spot beside the cabin stays visible.
+  bat('white', 2.05, 1.9, 0.7, 0.48, DECK_Y + 0.95, -3.0);       // cabin body
+  bat('white', 0.13, 1.9, 0.13, -1.42, DECK_Y + 0.95, -2.72);    // wing posts hold the roof
+  bat('white', 0.13, 1.9, 0.13, -1.42, DECK_Y + 0.95, -3.28);
+  // big dark windows on all four sides (front panes raked forward, trawler-style)
+  const wy = DECK_Y + 1.42;
+  bat('dark', 0.78, 0.58, 0.07, 0.06, wy, -2.57, 0.18);          // front panes
+  bat('dark', 0.78, 0.58, 0.07, 0.92, wy, -2.57, 0.18);
+  bat('dark', 0.07, 0.52, 0.5, 1.52, wy, -3.0);                  // starboard window
+  bat('dark', 0.07, 0.52, 0.5, -0.56, wy, -3.0);                 // wing-side window
+  bat('dark', 0.85, 0.48, 0.07, 0.95, wy, -3.37);                // back window
+  bat('dark', 0.6, 1.35, 0.07, 0.02, DECK_Y + 0.7, -3.37);       // back door
+  bat('red', 3.5, 0.16, 1.2, 0, DECK_Y + 1.98, -3.0);            // red roof (covers the wing too)
+  // roof gear: spinning radar bar, exhaust stack, nav lights (antenna line in buildRigging)
+  bat('metalDark', 0.09, 0.24, 0.09, 0.5, DECK_Y + 2.18, -3.1);  // radar post
+  radarBar = box(0.9, 0.07, 0.18, M.white, 0.5, DECK_Y + 2.33, -3.1);
+  const stack = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.13, 0.8, 8), M.metalDark);
+  stack.position.set(1.15, DECK_Y + 2.42, -3.3);
+  group.add(stack);
+  stackTip = new THREE.Object3D();                               // smoke puffs from here
+  stackTip.position.set(1.15, DECK_Y + 2.85, -3.3);
+  group.add(stackTip);
+  box(0.14, 0.14, 0.14, M.navR, -1.62, DECK_Y + 2.13, -2.75);    // port nav light (red)
+  box(0.14, 0.14, 0.14, M.navG, 1.62, DECK_Y + 2.13, -2.75);     // starboard nav light (green)
+  // life-buoy ring on the back wall
+  const ring = new THREE.Mesh(new THREE.TorusGeometry(0.26, 0.07, 6, 12), M.red);
+  ring.position.set(0.95, DECK_Y + 0.8, -3.42);
+  group.add(ring);
+  // ship's wheel out front (the wheel station stands here, facing the windows)
   const wheel = new THREE.Mesh(new THREE.TorusGeometry(0.42, 0.06, 6, 10), M.woodDark);
-  wheel.position.set(0, DECK_Y + 1.25, -2.62);
+  wheel.position.set(0, DECK_Y + 1.2, -2.45);
   group.add(wheel);
-  for (let i = 0; i < 3; i++) {
-    const spoke = new THREE.Mesh(new THREE.BoxGeometry(0.98, 0.06, 0.06), M.woodDark);
-    spoke.position.copy(wheel.position);
-    spoke.rotation.z = (i / 3) * Math.PI;
-    group.add(spoke);
-  }
-  // lantern on the cabin roof (warm light at night)
+  for (let i = 0; i < 3; i++)
+    bat('woodDark', 0.98, 0.06, 0.06, 0, DECK_Y + 1.2, -2.45, 0, 0, (i / 3) * Math.PI);
+  bat('woodDark', 0.13, 0.6, 0.13, 0, DECK_Y + 0.92, -2.56, 0.3); // wheel pedestal
+  // lantern on the wheelhouse roof (warm light at night)
   const lamp = new THREE.Mesh(new THREE.SphereGeometry(0.18, 8, 6), M.glow);
-  lamp.position.set(0, DECK_Y + 2.25, -1.8);
+  lamp.position.set(-0.3, DECK_Y + 2.25, -2.75);
   group.add(lamp);
   lantern = new THREE.PointLight(0xffb45e, 0, 22, 1.6);
   lantern.position.copy(lamp.position);
@@ -231,55 +310,94 @@ function buildCabin() {
 }
 
 function buildMast() {
-  box(0.22, 5.6, 0.22, M.woodDark, 0, DECK_Y + 2.8, 2.6);    // mast
-  // yard + rolled-up sail
-  const sail = new THREE.Mesh(new THREE.CylinderGeometry(0.28, 0.28, 3.6, 8), M.canvas);
-  sail.rotation.z = Math.PI / 2;
-  sail.position.set(0, DECK_Y + 4.4, 2.6);
-  group.add(sail);
-  box(4.0, 0.12, 0.12, M.woodDark, 0, DECK_Y + 4.7, 2.6);
-  // crow's nest
-  const nest = new THREE.Mesh(new THREE.CylinderGeometry(0.55, 0.42, 0.5, 8), M.wood);
-  nest.position.set(0, DECK_Y + 5.4, 2.6);
-  group.add(nest);
+  // trawler work mast just behind the wheelhouse, boom angled aft over the gantry
+  bat('wood', 0.2, 4.7, 0.2, 0, DECK_Y + 2.35, -3.85);           // main pole
+  bat('wood', 1.5, 0.1, 0.1, 0, DECK_Y + 3.85, -3.85);           // cross-tree
+  bat('wood', 0.12, 3.0, 0.12, 0, DECK_Y + 2.68, -5.19, -1.1);   // boom, tip over the stern
+  // little crow's-nest light on top
+  const top = new THREE.Mesh(new THREE.SphereGeometry(0.11, 8, 6), M.glow);
+  top.position.set(0, DECK_Y + 4.82, -3.85);
+  group.add(top);
 }
 
 function buildEngine() {
-  box(1.6, 0.9, 0.9, M.metal, 0, DECK_Y + 0.45, -5.4);       // engine block
-  box(1.7, 0.2, 1.0, M.metalDark, 0, DECK_Y + 0.95, -5.4);
-  const stack = new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.18, 1.0, 8), M.metalDark);
-  stack.position.set(0.45, DECK_Y + 1.5, -5.4);
-  group.add(stack);
-  stackTip = new THREE.Object3D();
-  stackTip.position.set(0.45, DECK_Y + 2.05, -5.4);
-  group.add(stackTip);
+  bat('metal', 1.6, 0.9, 0.9, 0, DECK_Y + 0.45, -5.4);           // engine block
+  bat('metalDark', 1.7, 0.2, 1.0, 0, DECK_Y + 0.95, -5.4);
+  // net drum winch on the port quarter, next to the engine
+  const drum = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.3, 1.05, 9), M.net);
+  drum.rotation.x = Math.PI / 2;
+  drum.position.set(-2.05, DECK_Y + 0.42, -4.35);
+  group.add(drum);
+  bat('woodDark', 0.34, 0.55, 0.1, -2.05, DECK_Y + 0.27, -4.95); // drum stands
+  bat('woodDark', 0.34, 0.55, 0.1, -2.05, DECK_Y + 0.27, -3.75);
+}
+
+function buildGantry() {
+  // stern A-frame gantry — pure visuals, everything above head height
+  for (const s of [-1, 1]) {
+    bat('red', 0.16, 2.85, 0.16, s * 2.4, 2.58, -6.3);           // legs
+    bat('red', 0.11, 1.0, 0.11, s * 2.02, 3.42, -6.3, 0, 0, s * 0.55); // A-braces
+  }
+  bat('red', 5.1, 0.2, 0.2, 0, 4.0, -6.3);                       // crossbeam
+  bat('metalDark', 0.2, 0.28, 0.16, 0, 3.5, -6.3);               // hanging block
+  const hook = new THREE.Mesh(new THREE.TorusGeometry(0.09, 0.03, 5, 10), M.metal);
+  hook.position.set(0, 3.28, -6.3);
+  group.add(hook);
+  // rolled-up net draped over the beam + a bit of hanging mesh (cheap lattice)
+  const roll = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.22, 3.4, 8), M.net);
+  roll.rotation.z = Math.PI / 2;
+  roll.position.set(0, 3.66, -6.5);
+  group.add(roll);
+  const lattice = [];
+  for (const x of [-1.2, -0.45, 0.45, 1.2]) lattice.push([0.05, 0.8, 0.05, x, 3.4, -6.56, 0.08]);
+  lattice.push([2.9, 0.05, 0.05, 0, 3.55, -6.56], [2.9, 0.05, 0.05, 0, 3.18, -6.56]);
+  makeInstanced(GEO.unit, M.net, lattice);
+}
+
+function buildDeckDressing() {
+  // two stacked blue fish crates by the hold hatch
+  bat('blue', 0.62, 0.6, 0.62, 2.2, DECK_Y + 0.3, 1.8);
+  bat('blue', 0.62, 0.6, 0.62, 2.2, DECK_Y + 0.9, 1.8, 0, 0.18);
+  // coiled rope on the foredeck (flat — slides stay funny)
+  const coil = new THREE.Mesh(new THREE.TorusGeometry(0.28, 0.11, 6, 12), M.canvas);
+  coil.scale.z = 0.5;
+  coil.rotation.x = -Math.PI / 2;
+  coil.position.set(-2.2, DECK_Y + 0.06, 2.7);
+  group.add(coil);
+  // three fenders hanging over each side (their lines live in buildRigging)
+  const fd = [];
+  for (const s of [-1, 1]) for (const z of [-4.0, -0.5, 3.0]) fd.push([1, 1, 1, s * 2.96, 0.78, z]);
+  makeInstanced(GEO.fender, M.buoy, fd);
 }
 
 function buildRailings() {
-  const railY = DECK_Y + 0.6;
-  // top rails: two sides, bow, and two stern pieces with a ladder gap in the middle
-  box(0.1, 0.1, 13.0, M.woodDark, -2.68, railY, 0);
-  box(0.1, 0.1, 13.0, M.woodDark, 2.68, railY, 0);
-  box(5.3, 0.1, 0.1, M.woodDark, 0, railY, 6.6);
-  box(1.9, 0.1, 0.1, M.woodDark, -1.72, railY, -6.6);        // stern port piece
-  box(1.9, 0.1, 0.1, M.woodDark, 1.72, railY, -6.6);         // stern starboard piece — gap at center = ladder
-  // posts as one InstancedMesh (single draw call)
-  const posts = [];
-  for (let z = -6; z <= 6; z += 1.5) { posts.push([-2.68, z], [2.68, z]); }
-  for (let x = -2; x <= 2; x += 1.3) posts.push([x, 6.6]);
-  posts.push([-1.2, -6.6], [-2.0, -6.6], [1.2, -6.6], [2.0, -6.6]);
-  const inst = new THREE.InstancedMesh(GEO.post, M.woodDark, posts.length);
-  const mtx = new THREE.Matrix4();
-  posts.forEach((p, i) => {
-    mtx.setPosition(p[0], DECK_Y + 0.3, p[1]);
-    inst.setMatrixAt(i, mtx);
-  });
-  inst.instanceMatrix.needsUpdate = true;
-  group.add(inst);
+  // bow + stern rails and posts (the side rails are now the bulwark from buildHull)
+  bat('woodDark', 4.6, 0.1, 0.1, 0, DECK_Y + 0.85, 6.6);         // bow rail
+  bat('woodDark', 1.9, 0.1, 0.1, -1.72, DECK_Y + 0.6, -6.6);     // stern port piece
+  bat('woodDark', 1.9, 0.1, 0.1, 1.72, DECK_Y + 0.6, -6.6);      // stern starboard — gap at center = ladder
+  for (let x = -2; x <= 2; x += 1) bat('woodDark', 0.1, 0.85, 0.1, x, DECK_Y + 0.42, 6.6);
+  for (const x of [-2.0, -1.2, 1.2, 2.0]) bat('woodDark', 0.1, 0.55, 0.1, x, DECK_Y + 0.3, -6.6);
   // stern ladder (down the gap)
-  box(0.08, 0.08, 0.9, M.woodDark, -0.35, 0.3, -7.0);
-  box(0.08, 0.08, 0.9, M.woodDark, 0.35, 0.3, -7.0);
-  for (let i = 0; i < 3; i++) box(0.75, 0.07, 0.07, M.wood, 0, -0.1 + i * 0.45, -7.0 - i * 0.12);
+  bat('woodDark', 0.08, 0.08, 0.9, -0.35, 0.3, -7.0);
+  bat('woodDark', 0.08, 0.08, 0.9, 0.35, 0.3, -7.0);
+  for (let i = 0; i < 3; i++) bat('wood', 0.75, 0.07, 0.07, 0, -0.1 + i * 0.45, -7.0 - i * 0.12);
+}
+
+function buildRigging() {
+  // ALL rigging as one LineSegments: stays, boom lift, hoist, antenna, fender lines
+  const p = [];
+  const seg = (ax, ay, az, bx, by, bz) => p.push(ax, ay, az, bx, by, bz);
+  const mhY = DECK_Y + 4.7;                                      // masthead
+  seg(0, mhY, -3.85, 0, DECK_Y + 0.9, 6.35);                     // forestay down to the bow
+  seg(0, mhY, -3.85, 0, 4.0, -6.3);                              // backstay to the gantry beam
+  seg(0, mhY, -3.85, 0, DECK_Y + 3.36, -6.52);                   // topping lift to the boom tip
+  seg(0, 3.9, -6.3, 0, 3.64, -6.3);                              // hoist rope to the block
+  seg(-1.42, DECK_Y + 2.06, -3.28, -1.58, DECK_Y + 3.6, -3.42);  // whip antenna off the roof
+  for (const s of [-1, 1]) for (const z of [-4.0, -0.5, 3.0])
+    seg(s * 2.74, DECK_Y + (z > 2 ? 0.82 : 0.62), z, s * 2.96, 1.0, z); // fender lines
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(p, 3));
+  group.add(new THREE.LineSegments(geo, M.line));
 }
 
 function buildCannon() {
@@ -306,17 +424,17 @@ function buildCannon() {
 
 function buildStationProps() {
   // supply crate (planks + buckets painted on top)
-  box(1.0, 0.8, 1.0, M.wood, -2.1, DECK_Y + 0.4, 0.6);
+  bat('wood', 1.0, 0.8, 1.0, -2.1, DECK_Y + 0.4, 0.6);
   box(0.8, 0.1, 0.25, M.canvas, -2.1, DECK_Y + 0.85, 0.45);  // planks peeking out
   const bkt = new THREE.Mesh(GEO.bucket, M.metal);
   bkt.position.set(-1.85, DECK_Y + 0.95, 0.85);
   group.add(bkt);
   // fish hold hatch
-  box(1.3, 0.12, 1.3, M.woodDark, 1.7, DECK_Y + 0.06, 0.6);
-  box(0.35, 0.1, 0.12, M.brass, 1.7, DECK_Y + 0.14, 0.6);
+  bat('woodDark', 1.3, 0.12, 1.3, 1.7, DECK_Y + 0.06, 0.6);
+  bat('brass', 0.35, 0.1, 0.12, 1.7, DECK_Y + 0.14, 0.6);
   // rod holders at stern corners
-  box(0.12, 0.7, 0.12, M.brass, -2.2, DECK_Y + 0.35, -6.1);
-  box(0.12, 0.7, 0.12, M.brass, 2.2, DECK_Y + 0.35, -6.1);
+  bat('brass', 0.12, 0.7, 0.12, -2.2, DECK_Y + 0.35, -6.1);
+  bat('brass', 0.12, 0.7, 0.12, 2.2, DECK_Y + 0.35, -6.1);
 }
 
 function buildWaterPlane() {
@@ -571,6 +689,7 @@ export function update(G, dt) {
   updateSmoke(G, dt);
   updateBolts(G, dt);
   updateLantern(G, dt);
+  updateRadar(dt);
   updatePuffs(dt);
 
   if (B.hull.hp <= 0 || B.water >= 1) startSinking(G);
@@ -847,6 +966,10 @@ function updateBolts(G, dt) {
 function updateLantern(G, dt) {
   const want = G.time?.phase === 'night' ? 1.8 : 0;
   lantern.intensity += (want - lantern.intensity) * Math.min(1, dt * 2);
+}
+
+function updateRadar(dt) {
+  radarBar.rotation.y += dt * 1.6; // roof radar sweeps slowly, forever
 }
 
 // ---------------------------------------------------------------- puffs (smoke/steam/splash/bubbles)
