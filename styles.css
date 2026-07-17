@@ -388,6 +388,203 @@ h1 {
   filter: drop-shadow(0 0 0.7rem #fff1a8);
 }
 
+/* --- Dear Fishermen: hav-scen --- */
+.game-card__art--sea {
+  background:
+    radial-gradient(circle at 22% 16%, rgba(255, 255, 255, 0.85) 0 0.14rem, transparent 0.18rem),
+    radial-gradient(circle at 70% 10%, rgba(255, 255, 255, 0.7) 0 0.11rem, transparent 0.15rem),
+    radial-gradient(circle at 88% 28%, rgba(255, 255, 255, 0.7) 0 0.12rem, transparent 0.16rem),
+    linear-gradient(165deg, #16405f 0%, #0b2d4a 55%, #071e33 100%);
+}
+
+.game-card__art--sea::before,
+.game-card__art--sea::after {
+  content: none;
+}
+
+.sea-moon {
+  position: absolute;
+  top: 2.6rem;
+  left: 2.8rem;
+  width: 4.6rem;
+  height: 4.6rem;
+  background: #fdf3d0;
+  border-radius: 50%;
+  box-shadow: 0 0 0 1rem rgba(253, 243, 208, 0.07), 0 0 3rem rgba(253, 243, 208, 0.35);
+}
+
+.fisher-boat {
+  position: absolute;
+  z-index: 2;
+  bottom: 9.5rem;
+  left: 50%;
+  width: 12rem;
+  height: 9rem;
+  transform: translateX(-50%);
+  animation: boat-bob 5s ease-in-out infinite;
+  transform-origin: 50% 100%;
+}
+
+.fisher-boat i {
+  position: absolute;
+  display: block;
+}
+
+.fisher-boat__hull {
+  bottom: 0;
+  left: 0;
+  width: 12rem;
+  height: 3.4rem;
+  background: #c8402f;
+  border: 5px solid #2c2035;
+  border-radius: 0 0 3rem 3rem / 0 0 2.4rem 2.4rem;
+}
+
+.fisher-boat__hull::before {
+  content: "";
+  position: absolute;
+  top: 0.55rem;
+  left: 0;
+  width: 100%;
+  height: 0.6rem;
+  background: #fff9f2;
+}
+
+.fisher-boat__cabin {
+  bottom: 3.1rem;
+  left: 1.6rem;
+  width: 4.2rem;
+  height: 3.2rem;
+  background: #f2c97b;
+  border: 5px solid #2c2035;
+  border-radius: 0.7rem 0.7rem 0 0;
+}
+
+.fisher-boat__cabin::before {
+  content: "";
+  position: absolute;
+  top: 0.55rem;
+  left: 0.55rem;
+  width: 1.3rem;
+  height: 1.1rem;
+  background: #ffe9a8;
+  border: 3px solid #2c2035;
+  border-radius: 0.3rem;
+}
+
+.fisher-boat__mast {
+  bottom: 3.1rem;
+  right: 3.4rem;
+  width: 0.55rem;
+  height: 5.6rem;
+  background: #8a5a33;
+  border: 3px solid #2c2035;
+}
+
+.fisher-boat__mast::before {
+  content: "";
+  position: absolute;
+  top: 0.4rem;
+  right: 0.55rem;
+  width: 3rem;
+  height: 0.25rem;
+  background: #d9d2c5;
+  transform: rotate(24deg);
+  transform-origin: right center;
+}
+
+.sea-wave {
+  position: absolute;
+  left: -12%;
+  width: 124%;
+  height: 7.5rem;
+  border-radius: 45% 55% 0 0 / 100% 100% 0 0;
+}
+
+.sea-wave--back {
+  z-index: 1;
+  bottom: 4.6rem;
+  background: #1d6fa5;
+  animation: wave-drift 7s ease-in-out infinite;
+}
+
+.sea-wave--front {
+  z-index: 3;
+  bottom: -1.6rem;
+  background: #15537d;
+  animation: wave-drift 5.5s ease-in-out infinite reverse;
+}
+
+.leviathan-shadow {
+  position: absolute;
+  z-index: 2;
+  bottom: 1.6rem;
+  left: 8%;
+  width: 22rem;
+  height: 4.2rem;
+  background: rgba(4, 14, 24, 0.55);
+  border-radius: 50%;
+  filter: blur(6px);
+  animation: lurk 9s ease-in-out infinite;
+}
+
+.leviathan-shadow::before {
+  content: "";
+  position: absolute;
+  top: -1.4rem;
+  right: 1rem;
+  width: 3.4rem;
+  height: 3.4rem;
+  background: rgba(4, 14, 24, 0.5);
+  border-radius: 50% 50% 0 50%;
+  transform: rotate(35deg);
+  filter: blur(3px);
+}
+
+.sea-fin {
+  position: absolute;
+  z-index: 3;
+  bottom: 5.4rem;
+  left: 16%;
+  width: 2.4rem;
+  height: 2rem;
+  background: #0a1f30;
+  clip-path: polygon(0 100%, 55% 0, 100% 100%);
+  animation: fin-swim 8s linear infinite;
+}
+
+.sea-shell {
+  position: absolute;
+  z-index: 4;
+  right: 14%;
+  bottom: 2.2rem;
+  font-size: 2.2rem;
+  filter: drop-shadow(0 0 0.7rem #9fe3ff);
+}
+
+@keyframes boat-bob {
+  0%, 100% { transform: translateX(-50%) rotate(-2.5deg) translateY(0); }
+  50% { transform: translateX(-50%) rotate(2.5deg) translateY(-0.5rem); }
+}
+
+@keyframes wave-drift {
+  0%, 100% { transform: translateX(-1.2rem); }
+  50% { transform: translateX(1.2rem); }
+}
+
+@keyframes fin-swim {
+  0% { transform: translateX(0) scaleX(1); }
+  45% { transform: translateX(26rem) scaleX(1); }
+  50% { transform: translateX(26rem) scaleX(-1); }
+  95% { transform: translateX(0) scaleX(-1); }
+  100% { transform: translateX(0) scaleX(1); }
+}
+
+@keyframes lurk {
+  0%, 100% { transform: translateX(0); opacity: 0.75; }
+  50% { transform: translateX(3rem); opacity: 0.45; }
+}
+
 .game-card__content {
   display: flex;
   flex-direction: column;

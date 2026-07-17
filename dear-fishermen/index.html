@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+    <meta name="description" content="Dear Fishermen — a silly co-op fishing chaos game designed by Eidan. Survive 3 weeks at sea… and beware the biggest fish." />
+    <meta name="theme-color" content="#0b2d4a" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="Dear Fishermen" />
+    <title>Dear Fishermen · Moas spel</title>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🎣</text></svg>" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@400;600;700&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <div id="game"></div>
+
+    <!-- HUD (owned by hud.js) -->
+    <div id="hud" class="hidden">
+      <div class="hud-left">
+        <div id="hud-day">Week 1 · Day 1</div>
+        <div id="hud-clock"><span id="hud-clock-icon">☀️</span><div id="hud-clock-bar"><div id="hud-clock-fill"></div></div></div>
+        <div id="hud-money">🪙 0</div>
+      </div>
+      <div class="hud-right">
+        <div id="hud-hull"><span>🚢</span><div class="bar"><div id="hud-hull-fill"></div></div></div>
+        <div id="hud-hold">🐟 0/10</div>
+        <div id="hud-oxygen" class="hidden"><span>🫧</span><div class="bar"><div id="hud-oxygen-fill"></div></div></div>
+        <div id="hud-compass"><span id="compass-harbor">⚓</span><span id="compass-fog">🌫️</span><span id="compass-deep">🌊</span></div>
+        <button id="btn-pixel" aria-label="Pixel graphics on/off">👾</button>
+        <button id="btn-pov" aria-label="Camera view">👁️</button>
+        <button id="btn-mute" aria-label="Sound on/off">🔊</button>
+        <button id="btn-pause" aria-label="Pause">⏸</button>
+      </div>
+    </div>
+
+    <!-- Boss / monster health (owned by threats.js via #alert area) -->
+    <div id="alert" class="hidden"></div>
+    <div id="bossbar" class="hidden"><span id="bossname">🦈</span><div class="bar"><div id="boss-fill"></div></div></div>
+    <div id="curse-tint" class="hidden"></div>
+
+    <!-- Player prompts (owned by hud.js) -->
+    <div id="prompt-p1" class="prompt hidden"></div>
+    <div id="prompt-p2" class="prompt hidden"></div>
+    <div id="banner" class="hidden"></div>
+    <div id="toast" class="hidden"></div>
+
+    <!-- Fishing minigame (owned by fishing.js) -->
+    <div id="fishing-ui" class="hidden"></div>
+
+    <!-- Shop (owned by economy.js) -->
+    <div id="shop-ui" class="hidden"></div>
+
+    <!-- Touch controls (owned by hud.js) -->
+    <div id="touch" class="hidden">
+      <div id="joystick"><div id="joystick-knob"></div></div>
+      <div id="touch-buttons">
+        <button id="btn-jump" aria-label="Jump">🦘</button>
+        <button id="btn-secondary" aria-label="Throw">🎯</button>
+        <button id="btn-action" aria-label="Action">✋</button>
+      </div>
+    </div>
+
+    <!-- Overlays (owned by hud.js) -->
+    <div id="title" class="overlay">
+      <div class="panel">
+        <p class="big-emoji">🎣</p>
+        <h1>Dear Fishermen</h1>
+        <p class="tagline">A silly co-op fishing disaster · designed by <strong>Eidan</strong></p>
+        <p class="story">
+          Your crew of wobbly fishermen has one job: survive <strong>3 weeks at sea</strong>.
+          Fish, dive, patch the leaks, ride the storms, get rich.<br />
+          But listen close… whoever catches the <strong>biggest fish in the ocean</strong>
+          doesn't keep it. <em>It keeps YOU.</em> 🌊
+        </p>
+        <button id="btn-start" class="primary">Set sail ⚓</button>
+        <button id="btn-continue" class="hidden">Continue voyage 💾</button>
+        <div class="controls-help">
+          <p><b>P1:</b> WASD move · <b>E</b> action · <b>Q</b> throw · <b>Space</b> jump/dive</p>
+          <p><b>P2:</b> press an arrow key to join! Arrows move · <b>.</b> action · <b>,</b> throw · <b>Right Shift</b> jump</p>
+          <p class="touch-help">On iPad: joystick on the left, buttons on the right!</p>
+        </div>
+      </div>
+    </div>
+
+    <div id="pause" class="overlay hidden">
+      <div class="panel">
+        <h1>Paused 🛟</h1>
+        <button id="btn-resume" class="primary">Keep fishing ▶️</button>
+        <button id="btn-quit">Back to title 🏠</button>
+      </div>
+    </div>
+
+    <div id="summary" class="overlay hidden">
+      <div class="panel">
+        <p class="big-emoji">🌅</p>
+        <h1 id="summary-title">Day 1 survived!</h1>
+        <p id="summary-text"></p>
+        <button id="btn-next-day" class="primary">Next day ☀️</button>
+      </div>
+    </div>
+
+    <div id="gameover" class="overlay hidden">
+      <div class="panel">
+        <p class="big-emoji">🫧</p>
+        <h1 id="gameover-title">Blub blub…</h1>
+        <p id="gameover-text">The sea remembers.</p>
+        <button id="btn-retry" class="primary">Back to last morning ⛅</button>
+        <button id="btn-gameover-title">Title screen 🏠</button>
+      </div>
+    </div>
+
+    <div id="retire" class="overlay hidden">
+      <div class="panel">
+        <p class="big-emoji">🏆</p>
+        <h1>Three weeks survived!</h1>
+        <p id="retire-text"></p>
+        <button id="btn-retire" class="primary">Retire as a legend 🌴</button>
+        <button id="btn-legacy">Continue the legacy ⚓ (it gets HARDER)</button>
+        <p><a class="portal-link" href="../">← Back to Moas spel</a></p>
+      </div>
+    </div>
+
+    <script type="module" src="js/main.js"></script>
+  </body>
+</html>

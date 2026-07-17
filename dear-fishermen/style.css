@@ -1,0 +1,169 @@
+/* Dear Fishermen — UI stylesheet */
+* { margin: 0; padding: 0; box-sizing: border-box; }
+:root {
+  --ink: #0b2d4a;
+  --paper: #fff8ea;
+  --sun: #ffc94d;
+  --rope: #d98f4e;
+  --sea: #1d6fa5;
+  --danger: #e5484d;
+  --ok: #3bb273;
+  --panel: rgba(11, 45, 74, 0.92);
+  --sa-top: env(safe-area-inset-top, 0px);
+  --sa-bottom: env(safe-area-inset-bottom, 0px);
+}
+html, body { height: 100%; overflow: hidden; }
+body {
+  font-family: 'Fredoka', 'Comic Sans MS', system-ui, sans-serif;
+  background: #06202f;
+  color: var(--paper);
+  -webkit-user-select: none; user-select: none;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: none;
+}
+#game, #game canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
+.hidden { display: none !important; }
+
+/* ---------- HUD ---------- */
+#hud {
+  position: fixed; top: calc(8px + var(--sa-top)); left: 12px; right: 12px;
+  display: flex; justify-content: space-between; align-items: flex-start;
+  pointer-events: none; z-index: 20; font-weight: 600;
+}
+.hud-left, .hud-right { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+#hud > div > div, #hud-day, #hud-money, #hud-hold {
+  background: var(--panel); border-radius: 999px; padding: 6px 14px;
+}
+#hud-day, #hud-money, #hud-hold, #hud-clock, #hud-hull, #hud-oxygen, #hud-compass {
+  background: var(--panel); border-radius: 999px; padding: 6px 14px;
+  display: flex; align-items: center; gap: 8px; font-size: 15px;
+}
+.bar, #hud-clock-bar {
+  width: 84px; height: 10px; background: rgba(255,255,255,0.2);
+  border-radius: 999px; overflow: hidden;
+}
+.bar > div, #hud-clock-fill { height: 100%; width: 50%; border-radius: 999px; transition: width 0.3s; }
+#hud-clock-fill { background: var(--sun); }
+#hud-hull-fill { background: var(--ok); }
+#hud-oxygen-fill { background: #6fd3ff; }
+#boss-fill { background: var(--danger); width: 100%; }
+#hud button {
+  pointer-events: auto; background: var(--panel); color: var(--paper);
+  border: 0; border-radius: 999px; width: 38px; height: 38px; font-size: 17px; cursor: pointer;
+}
+#hud-compass { font-size: 16px; }
+#compass-harbor { display: inline-block; transition: transform 0.2s; }
+
+/* ---------- Alerts / boss ---------- */
+#alert {
+  position: fixed; top: 18%; left: 50%; transform: translateX(-50%);
+  font-size: clamp(26px, 5vw, 44px); font-weight: 700; letter-spacing: 2px;
+  color: var(--sun); text-shadow: 0 3px 0 rgba(0,0,0,0.45);
+  z-index: 30; pointer-events: none; text-align: center;
+  animation: alertPulse 0.6s ease-in-out infinite alternate;
+}
+#alert.creepy { color: #8ef0a2; }
+@keyframes alertPulse { from { transform: translateX(-50%) scale(1); } to { transform: translateX(-50%) scale(1.07); } }
+#bossbar {
+  position: fixed; top: calc(58px + var(--sa-top)); left: 50%; transform: translateX(-50%);
+  background: var(--panel); border-radius: 999px; padding: 8px 16px;
+  display: flex; align-items: center; gap: 10px; z-index: 25; font-weight: 700;
+}
+#bossbar .bar { width: min(40vw, 260px); }
+#curse-tint {
+  position: fixed; inset: 0; z-index: 15; pointer-events: none;
+  background: radial-gradient(ellipse at center, transparent 40%, rgba(48, 160, 90, 0.35) 100%);
+  animation: cursePulse 2s ease-in-out infinite alternate;
+}
+@keyframes cursePulse { from { opacity: 0.6; } to { opacity: 1; } }
+
+/* ---------- Prompts, banner, toast ---------- */
+.prompt {
+  position: fixed; left: 50%; transform: translateX(-50%);
+  background: var(--panel); border: 2px solid var(--sun); border-radius: 14px;
+  padding: 8px 16px; font-size: 16px; font-weight: 600; z-index: 24; pointer-events: none;
+  max-width: 82vw; text-align: center;
+}
+#prompt-p1 { bottom: calc(120px + var(--sa-bottom)); }
+#prompt-p2 { bottom: calc(170px + var(--sa-bottom)); border-color: #6fd3ff; }
+#banner {
+  position: fixed; top: 30%; left: 50%; transform: translateX(-50%);
+  background: var(--panel); border-radius: 16px; padding: 14px 26px;
+  font-size: clamp(18px, 3.4vw, 26px); font-weight: 700; z-index: 28; pointer-events: none;
+  text-align: center; max-width: 86vw;
+}
+#toast {
+  position: fixed; bottom: calc(72px + var(--sa-bottom)); left: 50%; transform: translateX(-50%);
+  background: var(--panel); border-radius: 999px; padding: 8px 18px;
+  font-size: 15px; z-index: 26; pointer-events: none; text-align: center; max-width: 86vw;
+}
+
+/* ---------- Fishing minigame ---------- */
+#fishing-ui {
+  position: fixed; left: 50%; bottom: calc(200px + var(--sa-bottom)); transform: translateX(-50%);
+  z-index: 26; pointer-events: none;
+}
+
+/* ---------- Shop ---------- */
+#shop-ui {
+  position: fixed; inset: 0; z-index: 40;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(4, 20, 32, 0.72); backdrop-filter: blur(3px);
+  overflow: auto; padding: 20px; padding-top: calc(20px + var(--sa-top));
+}
+
+/* ---------- Touch controls ---------- */
+#touch { position: fixed; inset: 0; z-index: 22; pointer-events: none; }
+#joystick {
+  position: absolute; left: 26px; bottom: calc(30px + var(--sa-bottom));
+  width: 128px; height: 128px; border-radius: 50%;
+  background: rgba(255, 248, 234, 0.14); border: 2px solid rgba(255, 248, 234, 0.4);
+  pointer-events: auto;
+}
+#joystick-knob {
+  position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+  width: 56px; height: 56px; border-radius: 50%;
+  background: rgba(255, 248, 234, 0.85); box-shadow: 0 3px 8px rgba(0,0,0,0.4);
+}
+#touch-buttons {
+  position: absolute; right: 22px; bottom: calc(26px + var(--sa-bottom));
+  display: flex; gap: 14px; align-items: flex-end; pointer-events: auto;
+}
+#touch-buttons button {
+  border: 0; border-radius: 50%; font-size: 26px; cursor: pointer;
+  background: rgba(255, 248, 234, 0.85); box-shadow: 0 4px 0 rgba(0,0,0,0.35);
+  width: 64px; height: 64px;
+}
+#btn-action { width: 84px; height: 84px; font-size: 34px; background: var(--sun); }
+
+/* ---------- Overlays ---------- */
+.overlay {
+  position: fixed; inset: 0; z-index: 50;
+  display: flex; align-items: center; justify-content: center;
+  background: linear-gradient(180deg, rgba(6, 32, 47, 0.9), rgba(4, 16, 26, 0.96));
+  overflow: auto; padding: 18px; padding-top: calc(18px + var(--sa-top)); padding-bottom: calc(18px + var(--sa-bottom));
+}
+.panel {
+  background: var(--panel); border: 3px solid var(--rope); border-radius: 22px;
+  max-width: 620px; width: 100%; padding: 26px 26px 22px; text-align: center;
+  box-shadow: 0 16px 50px rgba(0,0,0,0.5);
+}
+.panel h1 { font-size: clamp(26px, 5.4vw, 40px); margin: 4px 0 10px; color: var(--sun); }
+.big-emoji { font-size: 52px; line-height: 1; }
+.tagline { font-size: 15px; opacity: 0.9; margin-bottom: 10px; }
+.story { font-size: 16px; line-height: 1.55; margin: 8px 0 16px; }
+.panel button {
+  font-family: inherit; font-weight: 700; font-size: 17px; cursor: pointer;
+  border: 0; border-radius: 999px; padding: 12px 26px; margin: 6px 4px;
+  background: rgba(255, 248, 234, 0.16); color: var(--paper);
+}
+.panel button.primary { background: var(--sun); color: var(--ink); box-shadow: 0 4px 0 rgba(0,0,0,0.35); }
+.panel button:active { transform: translateY(2px); }
+.controls-help { margin-top: 14px; font-size: 13px; opacity: 0.85; line-height: 1.6; }
+.portal-link { color: var(--paper); opacity: 0.8; font-size: 14px; }
+#summary-text, #retire-text { font-size: 16px; line-height: 1.6; margin-bottom: 12px; }
+
+@media (max-width: 700px) {
+  #hud-day { display: none; }
+  .bar, #hud-clock-bar { width: 56px; }
+}
