@@ -110,8 +110,8 @@ const G = {
 };
 
 function mkPad() {
-  return { x: 0, z: 0, action: false, secondary: false, jump: false,
-           actionHit: false, secondaryHit: false, jumpHit: false };
+  return { x: 0, z: 0, action: false, secondary: false, jump: false, helm: false,
+           actionHit: false, secondaryHit: false, jumpHit: false, helmHit: false };
 }
 
 // ---------------------------------------------------------------- state machine
@@ -151,17 +151,25 @@ function wipeSave() {
 // ---------------------------------------------------------------- input
 const KEYMAP = {
   p1: { KeyW: 'up', KeyS: 'down', KeyA: 'left', KeyD: 'right',
-        KeyE: 'action', KeyQ: 'secondary', Space: 'jump' },
+        KeyE: 'action', KeyQ: 'secondary', Space: 'jump', KeyF: 'helm' },
   p2: { ArrowUp: 'up', ArrowDown: 'down', ArrowLeft: 'left', ArrowRight: 'right',
         Period: 'action', Comma: 'secondary', ShiftRight: 'jump' },
 };
+// Fallback for keyboards/dispatchers that send ev.key but an empty ev.code
+const KEYMAP_BYKEY = {
+  p1: { w: 'up', s: 'down', a: 'left', d: 'right', e: 'action', q: 'secondary', ' ': 'jump', f: 'helm' },
+  p2: { arrowup: 'up', arrowdown: 'down', arrowleft: 'left', arrowright: 'right', '.': 'action', ',': 'secondary' },
+};
+function actFor(pid, ev) {
+  return KEYMAP[pid][ev.code] || (!ev.code ? KEYMAP_BYKEY[pid][(ev.key || '').toLowerCase()] : undefined);
+}
 const held = { p1: {}, p2: {} };
 const hits = { p1: {}, p2: {} };
 
 window.addEventListener('keydown', (ev) => {
   if (ev.repeat) return;
   for (const pid of ['p1', 'p2']) {
-    const act = KEYMAP[pid][ev.code];
+    const act = actFor(pid, ev);
     if (!act) continue;
     if (pid === 'p2' && !G.input.p2Active) { G.input.p2Active = true; emit('p2:join', {}); }
     held[pid][act] = true;
@@ -172,12 +180,12 @@ window.addEventListener('keydown', (ev) => {
     if (G.state === 'playing') setState('paused');
     else if (G.state === 'paused') setState('playing');
   }
-  if (ev.code === 'KeyV') togglePov();
-  if (ev.code === 'KeyG') togglePixel();
+  if (ev.code === 'KeyV' || (!ev.code && ev.key?.toLowerCase?.() === 'v')) togglePov();
+  if (ev.code === 'KeyG' || (!ev.code && ev.key?.toLowerCase?.() === 'g')) togglePixel();
 });
 window.addEventListener('keyup', (ev) => {
   for (const pid of ['p1', 'p2']) {
-    const act = KEYMAP[pid][ev.code];
+    const act = actFor(pid, ev);
     if (act) held[pid][act] = false;
   }
 });
@@ -197,8 +205,9 @@ function pollInput() {
     const h = held[pid];
     pad.x = (h.right ? 1 : 0) - (h.left ? 1 : 0);
     pad.z = (h.down ? 1 : 0) - (h.up ? 1 : 0);
-    pad.action = !!h.action; pad.secondary = !!h.secondary; pad.jump = !!h.jump;
+    pad.action = !!h.action; pad.secondary = !!h.secondary; pad.jump = !!h.jump; pad.helm = !!h.helm;
     pad.actionHit = !!hits[pid].action; pad.secondaryHit = !!hits[pid].secondary; pad.jumpHit = !!hits[pid].jump;
+    pad.helmHit = !!hits[pid].helm;
     hits[pid] = {};
   }
   // Touch merges into P1 (single human on iPad).
@@ -351,6 +360,27 @@ function updateCamera(dt) {
     return;
   }
   restorePovBody();
+  // Cannon cam (Eidan's request): when the solo human mans the cannon, aim over the shoulder.
+  if (!G.cameraFocus && !G.input.p2Active && G.boat) {
+    const can = G.boat.stations?.find?.(s => s.type === 'cannon');
+    if (can && can.user === G.players[0] && G.players[0]?.human) {
+      const h = G.boat.heading || 0;
+      const cy = G.boat.cannon?.yaw || 0, cp = G.boat.cannon?.pitch || 0;
+      // cannon aim in boat-local (+z = over the bow), rotated into world by heading
+      const lx = Math.sin(cy) * Math.cos(cp), ly = Math.sin(cp), lz = Math.cos(cy) * Math.cos(cp);
+      const wx = lx * Math.cos(h) + lz * Math.sin(h);
+      const wz = -lx * Math.sin(h) + lz * Math.cos(h);
+      const cw = G.boat.toWorld(tmpV.copy(can.localPos));
+      const px = cw.x, py = cw.y, pz = cw.z;
+      // close over-the-shoulder: 4.5 back (stays in front of the mast) + 1.9 to the right
+      const rx = -wz, rz = wx; // aim's right vector
+      camGoal.set(px - wx * 4.5 + rx * 1.9, py + 3.2 - ly * 1.5, pz - wz * 4.5 + rz * 1.9);
+      camera.position.lerp(camGoal, Math.min(1, dt * 6));
+      camLook.lerp(tmpV.set(px + wx * 22, py + 1 + ly * 18, pz + wz * 22), Math.min(1, dt * 8));
+      camera.lookAt(camLook);
+      return;
+    }
+  }
   let target, dist = 46, height = 30;
   if (G.cameraFocus) {
     const f = G.cameraFocus;

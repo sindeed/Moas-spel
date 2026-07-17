@@ -322,6 +322,25 @@ function findStation(type, freeOnly) {
   return null;
 }
 
+// F hotkey (Eidan's request): grab the wheel from anywhere on deck. Bots get booted; fish stay yours.
+function takeHelm(p) {
+  const wheel = findStation('wheel');
+  if (!wheel || p.mode !== 'deck') return;
+  if (p.carry?.fish) { G.ui?.toast('Drop your fish in the hold first! 🐟'); return; }
+  if (wheel.user === p) { releaseStation(p); p._hopV = HOP_V * 0.6; p._grounded = false; return; } // F again = let go
+  if (wheel.user) {
+    if (wheel.user.human) { G.ui?.toast('The other captain has the wheel! 🛞'); return; }
+    releaseStation(wheel.user); // shoo, bot
+  }
+  if (p.carry) setCarry(p, null); // tools go back in the pile, priorities!
+  wheel.user = p; p._station = wheel;
+  p.localPos.copy(wheel.localPos); p.localPos.y = deckY();
+  p._vel.set(0, 0, 0);
+  p.obj.position.copy(p.localPos);
+  G.sfx?.('thunk');
+  G.ui?.toast('You have the helm! 🛞');
+}
+
 function releaseStation(p) {
   if (p._station) {
     if (p._station.user === p) p._station.user = null;
@@ -691,6 +710,13 @@ function controlHuman(p, pad, dt) {
   if (p._station) {
     // parked at wheel/cannon/rod: movement locked (boat.js reads steering input itself)
     p.obj.position.set(p.localPos.x, p.localPos.y, p.localPos.z);
+    if (pad.helmHit) {
+      const atWheel = p._station.type === 'wheel';
+      releaseStation(p);
+      if (atWheel) { p._hopV = HOP_V * 0.6; p._grounded = false; } // F at the wheel = let go
+      else takeHelm(p);                                            // F elsewhere = swap to the wheel
+      return;
+    }
     const isRod = p._station.type === 'rod';
     if (pad.jumpHit || (!isRod && pad.actionHit)) {
       releaseStation(p);
@@ -721,6 +747,8 @@ function controlHuman(p, pad, dt) {
   }
 
   if (pad.secondaryHit && p.carry === 'bucketFull') throwWater(p);
+
+  if (pad.helmHit) { takeHelm(p); return; } // F: run to the wheel from anywhere on deck
 
   if (pad.actionHit) {
     const ns = nearestStation(p);
