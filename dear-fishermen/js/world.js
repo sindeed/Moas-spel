@@ -12,13 +12,20 @@ const OCEAN_SIZE = 500;
 const OCEAN_SEG = 88;          // 89x89 = 7921 verts — smooth enough, iPad-safe
 const FAR_RADIUS = 2300;
 const SKY_RADIUS = 820;
-const RAIN_COUNT = 600;
+const RAIN_COUNT = 500;        // wind-slanted streaks (instanced thin boxes)
 const RAIN_BOX = 140;          // xz extent around boat
 const RAIN_HEIGHT = 70;
+const RIPPLE_COUNT = 30;       // pooled rain-hit rings on the water
+const SPRAY_COUNT = 80;        // pooled crest spray puffs
+const GLINT_COUNT = 40;        // sun glints on the water near the boat
+const SMOKE_COUNT = 9;         // chimney smoke puffs (3 per cottage)
 const WISP_COUNT = 8;
 const BUOY_COUNT = 6;
-const HARBOR_CALM_NEAR = 40;   // waves damped close to the dock
-const HARBOR_CALM_FAR = 150;
+const HARBOR_CALM_NEAR = 55;   // waves damped close to the (longer) dock
+const HARBOR_CALM_FAR = 160;
+const ISLAND_TOP_R = 24;       // grass plateau radius (island XL)
+const ISLAND_MID_R = 30;       // mound-top / sand-ring radius
+const ISLAND_R = 48;           // beach outer radius = G.island.radius
 
 // Directional wave set (Gerstner-ish sum of sines). amp values are relative
 // weights; the whole thing is scaled by the storm-driven amplitude.
@@ -61,11 +68,30 @@ let firstFrame = true;
 let oceanMesh, oceanGeo, oceanBaseX, oceanBaseZ, farDisc, farMat;
 let skyGroup, sunMesh, moonMesh, starPoints, starMat;
 let hemiLight, dirLight, flashLight;
-let rainPoints, rainMat, rainPos;
+let rainMesh, rainMat, rainPos;
+let ripMesh, ripP = [], ripAccum = 0;
+let sprayMesh, sprayP = [], sprayAccum = 0;
+let glintMesh, glintMat, glintX, glintZ, glintPhase, glintO = 0;
+let smokeMesh, chimTops = [];
+let boltCore, boltGlow, boltCoreMat, boltGlowMat, boltLife = 0;
 let wispGroup, wispOrbs = [], wispLights = [], wispMat;
 let beamGroup, beamMat, windowMat, hutLight, lampMat;
 let buoys = [];
 let lastOceanT = -1, lastCX = 1e9, lastCZ = 1e9;
+
+// shared instancing helpers (no per-frame allocations)
+const dum = new THREE.Object3D();
+const ZERO_M = new THREE.Matrix4().makeScale(0, 0, 0);
+const UP_V = new THREE.Vector3(0, 1, 0);
+const rainVel = new THREE.Vector3();
+const rainDir = new THREE.Vector3();
+const boltTmp = new THREE.Vector3();
+const boltPts = [];
+for (let i = 0; i < 5; i++) boltPts.push(new THREE.Vector3());
+function hideAllInstances(im, n) {
+  for (let i = 0; i < n; i++) im.setMatrixAt(i, ZERO_M);
+  im.instanceMatrix.needsUpdate = true;
+}
 
 // temps (no per-frame allocations)
 const tmpC1 = new THREE.Color();
@@ -98,8 +124,8 @@ function heightAt(x, z) {
   for (let i = 0; i < WAVES.length; i++) {
     const w = WAVES[i];
     const ph = x * w.kx + z * w.kz + t * w.speed;
-    // slight second harmonic sharpens crests a bit (choppy look)
-    h += w.amp * (Math.sin(ph) + 0.24 * Math.sin(ph * 2.17 + 1.3));
+    // 2nd + small 3rd harmonic = punchy sharp crests (keep in sync with updateOcean!)
+    h += w.amp * (Math.sin(ph) + 0.34 * Math.sin(ph * 2.17 + 1.3) + 0.12 * Math.sin(ph * 3.37 + 2.1));
   }
   // calm pocket around the harbor so mooring/shop time isn't a rodeo
   const dx = x - HARBOR.x, dz = z - HARBOR.z;
@@ -119,9 +145,9 @@ function normalAt(x, z, out) {
 function floorAt(x, z) {
   const dx = x - HARBOR.x, dz = z - HARBOR.z;
   const d = Math.sqrt(dx * dx + dz * dz);
-  // beach ~-3 at the island, ~-12 along the coast, down to ~-30 in the deep
-  let depth = -3 - 9 * ss(15, 70, d) - 18 * ss(220, 560, d);
-  depth += Math.sin(x * 0.05) * Math.cos(z * 0.043) * 1.8 * ss(30, 90, d);
+  // beach ~-3 at the (XL) island, ~-12 along the coast, down to ~-30 in the deep
+  let depth = -3 - 9 * ss(48, 115, d) - 18 * ss(220, 560, d);
+  depth += Math.sin(x * 0.05) * Math.cos(z * 0.043) * 1.8 * ss(55, 120, d);
   return depth;
 }
 
@@ -129,22 +155,87 @@ function zoneAt(x, z) {
   if (x < -260 && z < -260) return 'fog'; // cursed north-west quadrant
   const dx = x - HARBOR.x, dz = z - HARBOR.z;
   const d = Math.sqrt(dx * dx + dz * dz);
-  if (d < 70) return 'harbor';
+  if (d < 80) return 'harbor'; // ≥ island radius (48) + 25
   if (d < 220) return 'coast';
   if (d < 520) return 'open';
   return 'deep';
 }
 
 // ------------------------------------------------------------- weather
+// Jagged bolt (4 white core segments + additive glow) drawn sky → target point.
+function fireBoltVisual(tx, ty, tz) {
+  if (!boltCore) return;
+  const sx = tx + (G.rng() * 2 - 1) * 34;
+  const sz = tz + (G.rng() * 2 - 1) * 34;
+  const sy = ty + 115;
+  for (let i = 0; i <= 4; i++) {
+    const u = i / 4;
+    const jag = (i > 0 && i < 4) ? 1 : 0; // endpoints stay pinned
+    boltPts[i].set(
+      lerp(sx, tx, u) + jag * (G.rng() * 2 - 1) * 11,
+      lerp(sy, ty, u),
+      lerp(sz, tz, u) + jag * (G.rng() * 2 - 1) * 11);
+  }
+  for (let i = 0; i < 4; i++) {
+    const a = boltPts[i], b = boltPts[i + 1];
+    const len = a.distanceTo(b);
+    boltTmp.copy(b).sub(a).normalize();
+    dum.position.copy(a).add(b).multiplyScalar(0.5);
+    dum.quaternion.setFromUnitVectors(UP_V, boltTmp);
+    dum.scale.set(0.4, len, 0.4);
+    dum.updateMatrix();
+    boltCore.setMatrixAt(i, dum.matrix);
+    dum.scale.set(1.5, len, 1.5);
+    dum.updateMatrix();
+    boltGlow.setMatrixAt(i, dum.matrix);
+  }
+  boltCore.instanceMatrix.needsUpdate = true;
+  boltGlow.instanceMatrix.needsUpdate = true;
+  boltCore.visible = boltGlow.visible = true;
+  boltLife = 0.25;
+}
+
 function lightning() {
   flashI = 2.6;
+  const w = G?.weather;
+  const bp = G?.boat?.group?.position;
+  if (bp && w && w.storm > 0.35) {
+    const hit = G.rng() < (w.typhoon ? 0.05 : 0.01);
+    if (hit) {
+      // ZAP! straight into the mast top — big flash, damage, fire
+      const m = G.boat?.toWorld?.(boltTmp.set(0, 6.0, -3.85));
+      if (m) fireBoltVisual(m.x, m.y, m.z);
+      else fireBoltVisual(bp.x, bp.y + 6, bp.z);
+      flashI = 4.4;
+      G.boat?.damage?.(6, 'lightning');
+      G.boat?.addFire?.();
+      G?.emit?.('lightning:strike', {});
+    } else {
+      // visible drama out at sea, 120–400u away, no damage
+      const a = G.rng() * Math.PI * 2;
+      const r = 120 + G.rng() * 280;
+      const x = bp.x + Math.cos(a) * r, z = bp.z + Math.sin(a) * r;
+      fireBoltVisual(x, heightAt(x, z), z);
+    }
+  }
   G?.emit?.('lightning', {});
+}
+
+function updateBolt(dt) {
+  if (boltLife <= 0 || !boltCore) return;
+  boltLife -= dt;
+  const flick = 0.7 + 0.3 * Math.sin(G.time.total * 90);
+  boltCoreMat.opacity = flick;
+  boltGlowMat.opacity = flick * 0.5;
+  if (boltLife <= 0) { boltCore.visible = boltGlow.visible = false; }
 }
 
 function resetWeather() {
   const w = G.weather;
   w.storm = 0; w.stormTarget = 0; w.typhoon = false;
   oceanAmp = 0.8; typhoonMix = 0; flashI = 0; boltTimer = 5;
+  boltLife = 0;
+  if (boltCore) boltCore.visible = boltGlow.visible = false;
 }
 
 // ------------------------------------------------------------- init helpers
@@ -225,22 +316,87 @@ function buildSky(scene) {
 }
 
 function buildRain(scene) {
+  // RAIN 2.0: wind-slanted streaks — instanced thin boxes, one shared orientation
   rainPos = new Float32Array(RAIN_COUNT * 3);
   for (let i = 0; i < RAIN_COUNT; i++) {
     rainPos[i * 3] = (Math.random() * 2 - 1) * RAIN_BOX * 0.5;
     rainPos[i * 3 + 1] = Math.random() * RAIN_HEIGHT;
     rainPos[i * 3 + 2] = (Math.random() * 2 - 1) * RAIN_BOX * 0.5;
   }
-  const g = new THREE.BufferGeometry();
-  g.setAttribute('position', new THREE.BufferAttribute(rainPos, 3));
-  rainMat = new THREE.PointsMaterial({
-    color: 0xa9c4de, size: 1.7, sizeAttenuation: false,
-    transparent: true, opacity: 0, depthWrite: false,
+  rainMat = new THREE.MeshBasicMaterial({
+    color: 0xbcd3e8, transparent: true, opacity: 0, depthWrite: false, fog: false,
   });
-  rainPoints = new THREE.Points(g, rainMat);
-  rainPoints.frustumCulled = false;
-  rainPoints.visible = false;
-  scene.add(rainPoints);
+  rainMesh = new THREE.InstancedMesh(new THREE.BoxGeometry(0.05, 1, 0.05), rainMat, RAIN_COUNT);
+  rainMesh.instanceMatrix.setUsage?.(THREE.DynamicDrawUsage);
+  rainMesh.frustumCulled = false;
+  rainMesh.visible = false;
+  hideAllInstances(rainMesh, RAIN_COUNT);
+  scene.add(rainMesh);
+
+  // rain-hit ring ripples on the water (pooled)
+  const ripGeo = new THREE.RingGeometry(0.55, 0.78, 14);
+  ripGeo.rotateX(-Math.PI / 2);
+  ripMesh = new THREE.InstancedMesh(ripGeo, new THREE.MeshBasicMaterial({
+    color: 0xe4f2ff, transparent: true, opacity: 0.38, depthWrite: false,
+  }), RIPPLE_COUNT);
+  ripMesh.instanceMatrix.setUsage?.(THREE.DynamicDrawUsage);
+  ripMesh.frustumCulled = false;
+  ripMesh.visible = false;
+  hideAllInstances(ripMesh, RIPPLE_COUNT);
+  for (let i = 0; i < RIPPLE_COUNT; i++) ripP.push({ on: false, x: 0, z: 0, age: 0 });
+  scene.add(ripMesh);
+}
+
+function buildSpray(scene) {
+  // white crest-spray puffs (pooled, one instanced mesh)
+  sprayMesh = new THREE.InstancedMesh(
+    new THREE.SphereGeometry(0.42, 6, 5),
+    new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.8, depthWrite: false }),
+    SPRAY_COUNT);
+  sprayMesh.instanceMatrix.setUsage?.(THREE.DynamicDrawUsage);
+  sprayMesh.frustumCulled = false;
+  hideAllInstances(sprayMesh, SPRAY_COUNT);
+  for (let i = 0; i < SPRAY_COUNT; i++) {
+    sprayP.push({ on: false, x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, life: 0, max: 1 });
+  }
+  scene.add(sprayMesh);
+
+  // sun glints: tiny bright quads lying flat on the swell
+  const gg = new THREE.PlaneGeometry(0.55, 0.55);
+  gg.rotateX(-Math.PI / 2);
+  glintMat = new THREE.MeshBasicMaterial({
+    color: 0xfff6c9, transparent: true, opacity: 0,
+    blending: THREE.AdditiveBlending, depthWrite: false, fog: false,
+  });
+  glintMesh = new THREE.InstancedMesh(gg, glintMat, GLINT_COUNT);
+  glintMesh.instanceMatrix.setUsage?.(THREE.DynamicDrawUsage);
+  glintMesh.frustumCulled = false;
+  glintMesh.visible = false;
+  glintX = new Float32Array(GLINT_COUNT);
+  glintZ = new Float32Array(GLINT_COUNT);
+  glintPhase = new Float32Array(GLINT_COUNT);
+  for (let i = 0; i < GLINT_COUNT; i++) {
+    glintX[i] = (Math.random() * 2 - 1) * 40;
+    glintZ[i] = (Math.random() * 2 - 1) * 40;
+    glintPhase[i] = Math.random() * Math.PI * 2;
+  }
+  scene.add(glintMesh);
+}
+
+function buildBolt(scene) {
+  const seg = new THREE.BoxGeometry(1, 1, 1);
+  boltCoreMat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 1, fog: false });
+  boltGlowMat = new THREE.MeshBasicMaterial({
+    color: 0x9fd0ff, transparent: true, opacity: 0.5,
+    blending: THREE.AdditiveBlending, depthWrite: false, fog: false,
+  });
+  boltCore = new THREE.InstancedMesh(seg, boltCoreMat, 4);
+  boltGlow = new THREE.InstancedMesh(seg, boltGlowMat, 4);
+  for (const m of [boltCore, boltGlow]) {
+    m.frustumCulled = false;
+    m.visible = false;
+    scene.add(m);
+  }
 }
 
 function buildWisps(scene) {
@@ -272,19 +428,19 @@ function buildHarbor(scene) {
   const wood = toon(0xa9713d);
   const woodDark = toon(0x7d5228);
 
-  // island mound + grass top
-  const mound = new THREE.Mesh(new THREE.CylinderGeometry(19, 30, 7, 12), sand);
+  // island mound + grass top (ISLAND XL: top 30, base 48)
+  const mound = new THREE.Mesh(new THREE.CylinderGeometry(ISLAND_MID_R, ISLAND_R, 7, 14), sand);
   mound.position.y = -1.0;
   h.add(mound);
-  const grass = new THREE.Mesh(new THREE.CylinderGeometry(15, 18.5, 1.6, 12), toon(0x6cc24a));
+  const grass = new THREE.Mesh(new THREE.CylinderGeometry(ISLAND_TOP_R, 29.5, 1.6, 14), toon(0x6cc24a));
   grass.position.y = 2.6;
   h.add(grass);
 
-  // dock: planks marching toward the open sea (-z), on posts
-  const plankGeo = new THREE.BoxGeometry(6, 0.5, 2.1);
-  for (let i = 0; i < 10; i++) {
+  // dock: planks marching toward the open sea (-z), on posts — longer to clear the bigger beach
+  const plankGeo = new THREE.BoxGeometry(6, 0.5, 2.2);
+  for (let i = 0; i < 11; i++) {
     const p = new THREE.Mesh(plankGeo, i % 2 ? wood : woodDark);
-    p.position.set(0, 2.1, -22 - i * 2.5);
+    p.position.set(0, 2.1, -32 - i * 2.6);
     p.rotation.y = (i % 3 - 1) * 0.02; // slightly wonky planks, on purpose
     h.add(p);
   }
@@ -292,7 +448,7 @@ function buildHarbor(scene) {
   for (let i = 0; i < 3; i++) {
     for (const sx of [-2.6, 2.6]) {
       const post = new THREE.Mesh(postGeo, woodDark);
-      post.position.set(sx, -1.0, -24 - i * 10);
+      post.position.set(sx, -1.0, -34 - i * 11);
       h.add(post);
     }
   }
@@ -300,13 +456,13 @@ function buildHarbor(scene) {
   const bollGeo = new THREE.CylinderGeometry(0.5, 0.6, 1.5, 8);
   for (const sx of [-2.4, 2.4]) {
     const b = new THREE.Mesh(bollGeo, toon(0x394b59));
-    b.position.set(sx, 3.0, -45);
+    b.position.set(sx, 3.0, -58);
     h.add(b);
   }
 
   // harbor hut with a warm little window (glows at night)
   const hut = new THREE.Group();
-  hut.position.set(-8, 3.4, 8);
+  hut.position.set(-14, 3.4, 12);
   const walls = new THREE.Mesh(new THREE.BoxGeometry(7, 5, 6), toon(0xd9583b));
   walls.position.y = 2.5;
   hut.add(walls);
@@ -324,7 +480,7 @@ function buildHarbor(scene) {
 
   // lighthouse with rotating night beam
   const lh = new THREE.Group();
-  lh.position.set(10, 2.8, 9);
+  lh.position.set(16, 3.0, 13);
   const tower = new THREE.Mesh(new THREE.CylinderGeometry(2.0, 2.8, 15, 10), toon(0xf5f1e6));
   tower.position.y = 7.5;
   lh.add(tower);
@@ -364,17 +520,18 @@ function buildHarbor(scene) {
   const trunkMat = toon(0xa9713d);
   const leafGeo = new THREE.ConeGeometry(3.2, 1.4, 6);
   const leafMat = toon(0x3bb273);
-  const palmSpots = [[-13, -2, 0.22], [5, 14, -0.18], [14, -4, 0.12]];
+  const palmSpots = [[-21, -5, 0.22], [7, 20, -0.18], [22, -7, 0.12], [-8, 21, -0.1]];
   for (const [px, pz, tilt] of palmSpots) {
+    const base = islandGroundY(HARBOR.x + px, HARBOR.z + pz);
     const tr = new THREE.Mesh(trunkGeo, trunkMat);
-    tr.position.set(px, 6, pz); tr.rotation.z = tilt;
+    tr.position.set(px, base + 3.3, pz); tr.rotation.z = tilt;
     h.add(tr);
     const top = new THREE.Mesh(leafGeo, leafMat);
-    top.position.set(px - Math.sin(tilt) * 7, 9.6, pz);
+    top.position.set(px - Math.sin(tilt) * 7, base + 6.9, pz);
     top.scale.y = 1.6;
     h.add(top);
     const top2 = new THREE.Mesh(leafGeo, leafMat);
-    top2.position.set(px - Math.sin(tilt) * 7, 10.7, pz);
+    top2.position.set(px - Math.sin(tilt) * 7, base + 8.0, pz);
     top2.scale.set(0.62, 1.1, 0.62);
     h.add(top2);
   }
@@ -408,10 +565,10 @@ function buildHarbor(scene) {
 function islandGroundY(x, z) {
   const dx = x - HARBOR.x, dz = z - HARBOR.z;
   const d = Math.sqrt(dx * dx + dz * dz);
-  if (d < 15) return 3.4;                         // grass top
-  if (d < 19) return 3.4 - 0.9 * ((d - 15) / 4);  // grass rim down to the sand ring
-  if (d < 30) return 2.5 - 7.0 * ((d - 19) / 11); // beach slope into the sea
-  return -4.5;                                    // underwater — off the island
+  if (d < ISLAND_TOP_R) return 3.4;                              // grass top
+  if (d < ISLAND_MID_R) return 3.4 - 0.9 * ((d - ISLAND_TOP_R) / (ISLAND_MID_R - ISLAND_TOP_R));
+  if (d < ISLAND_R) return 2.5 - 7.0 * ((d - ISLAND_MID_R) / (ISLAND_R - ISLAND_MID_R)); // beach
+  return -4.5;                                                   // underwater — off the island
 }
 
 function buildVillage(h, wood, woodDark) {
@@ -436,15 +593,20 @@ function buildVillage(h, wood, woodDark) {
   const postM = []; // every wooden pole in the village shares ONE instanced mesh
 
   // --- 3 cottages in a half-circle facing the dock (windows reuse windowMat → night glow, no lights)
+  // ISLAND XL: respaced onto the bigger grass top + porches, shutters, ridge caps, fences.
   const wallGeo = new THREE.BoxGeometry(4.6, 3.2, 4.0);
   const cRoofGeo = new THREE.ConeGeometry(3.6, 2.4, 4);
   const roofMat = toon(0x6b4a33);
   const doorM = [], winM = [], wboxM = [], chimM = [];
-  for (const [cx, cz, ry, mat] of [
-    [-9, -8, -0.3, toon(0xc94f43)],   // red
-    [0.5, -10.5, 0.05, toon(0xd9a441)], // ochre
-    [9, -7.5, 0.35, blue],            // blue
-  ]) {
+  const porchM = [], shutM = [], capM = [], fenceM = [];
+  chimTops.length = 0;
+  const COTTAGES = [
+    [-16, -13, -0.35, toon(0xc94f43), true],   // red (fenced)
+    [1, -17, 0.05, toon(0xd9a441), false],     // ochre
+    [16, -12, 0.4, blue, true],                // blue (fenced)
+  ];
+  const chimV = new THREE.Vector3();
+  for (const [cx, cz, ry, mat, fenced] of COTTAGES) {
     const walls = new THREE.Mesh(wallGeo, mat);
     walls.position.set(cx, 5.0, cz); walls.rotation.y = ry;
     h.add(walls);
@@ -456,15 +618,77 @@ function buildVillage(h, wood, woodDark) {
     winM.push(M(1.2, 2.1, -2.02, Math.PI).premultiply(hm));
     wboxM.push(M(1.2, 1.42, -2.22).premultiply(hm));
     chimM.push(M(-1.3, 4.1, 0.8).premultiply(hm));
+    // chimney mouth in world coords (smoke puffs spawn here)
+    chimV.set(-1.3, 4.95, 0.8).applyMatrix4(hm);
+    chimTops.push(new THREE.Vector3(HARBOR.x + chimV.x, chimV.y, HARBOR.z + chimV.z));
+    // porch: little sloped roof over the door + 2 posts
+    porchM.push(M(-0.85, 2.62, -2.75, 0, null, 0.3).premultiply(hm));
+    postM.push(
+      M(-1.85, 1.15, -2.85, 0, [0.8, 2.3, 0.8]).premultiply(hm),
+      M(0.15, 1.15, -2.85, 0, [0.8, 2.3, 0.8]).premultiply(hm));
+    // window shutters
+    shutM.push(
+      M(0.44, 2.1, -2.06).premultiply(hm),
+      M(1.96, 2.1, -2.06).premultiply(hm));
+    // roof ridge cap on the apex
+    capM.push(M(0, 5.72, 0, Math.PI / 4).premultiply(hm));
+    // garden picket fence: front run (gate gap at the door) + two short sides
+    if (!fenced) continue;
+    for (let px = -2.7; px <= 2.7; px += 0.6) {
+      if (px > -1.7 && px < 0.1) continue; // gate
+      fenceM.push(M(px, 0.5, -4.3, 0, [0.13, 1.0, 0.07]).premultiply(hm));
+    }
+    for (const sx of [-2.7, 2.7]) {
+      for (const pz of [-3.7, -3.1, -2.5]) {
+        fenceM.push(M(sx, 0.5, pz, 0, [0.07, 1.0, 0.13]).premultiply(hm));
+      }
+      fenceM.push(M(sx, 0.72, -3.35, 0, [0.06, 0.08, 2.0]).premultiply(hm)); // side rail
+    }
+    fenceM.push(
+      M(-2.2, 0.72, -4.3, 0, [1.15, 0.08, 0.06]).premultiply(hm),  // front rails
+      M(1.45, 0.72, -4.3, 0, [2.4, 0.08, 0.06]).premultiply(hm));
   }
   inst(h, new THREE.BoxGeometry(1.1, 2.0, 0.16), white, doorM);
   inst(h, new THREE.PlaneGeometry(1.15, 1.15), windowMat, winM);
   inst(h, new THREE.BoxGeometry(1.5, 0.34, 0.4), white, wboxM);
   inst(h, new THREE.BoxGeometry(0.7, 1.4, 0.7), woodDark, chimM);
+  inst(h, new THREE.BoxGeometry(2.3, 0.12, 1.4), roofMat, porchM);
+  inst(h, new THREE.BoxGeometry(0.36, 1.15, 0.1), toon(0x3e6b4f), shutM);
+  inst(h, new THREE.BoxGeometry(0.62, 0.24, 0.62), woodDark, capM);
+  inst(h, new THREE.BoxGeometry(1, 1, 1), white, fenceM);
+
+  // --- clothesline between the red and ochre cottages (2 posts + line + 3 cloths)
+  const clA = { x: -10.5, z: -15.2 }, clB = { x: -3.6, z: -16.3 };
+  postM.push(
+    M(clA.x, gy(clA.x, clA.z) + 1.35, clA.z, 0, [0.8, 2.7, 0.8]),
+    M(clB.x, gy(clB.x, clB.z) + 1.35, clB.z, 0, [0.8, 2.7, 0.8]));
+  const clY = 3.4 + 2.6;
+  const clPts = [
+    new THREE.Vector3(clA.x, clY, clA.z),
+    new THREE.Vector3((clA.x + clB.x) / 2, clY - 0.3, (clA.z + clB.z) / 2),
+    new THREE.Vector3(clB.x, clY, clB.z),
+  ];
+  h.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(clPts),
+    new THREE.LineBasicMaterial({ color: 0xe8e2d2 })));
+  const clothGeo = new THREE.PlaneGeometry(0.95, 0.75);
+  const clothMat = toon(0xffffff, { side: THREE.DoubleSide });
+  const cloths = new THREE.InstancedMesh(clothGeo, clothMat, 3);
+  const clAng = Math.atan2(clB.x - clA.x, clB.z - clA.z) + Math.PI / 2;
+  const clCol = [0xf3b6c9, 0x9cc8f0, 0xf6f2e8];
+  for (let i = 0; i < 3; i++) {
+    const u = 0.25 + i * 0.25;
+    cloths.setMatrixAt(i, M(
+      lerp(clA.x, clB.x, u), clY - 0.32 - Math.sin(Math.PI * u) * 0.28,
+      lerp(clA.z, clB.z, u), clAng, null, 0, 0.06 - i * 0.05));
+    cloths.setColorAt(i, tmpC1.setHex(clCol[i]));
+  }
+  if (cloths.instanceColor) cloths.instanceColor.needsUpdate = true;
+  cloths.computeBoundingSphere?.();
+  h.add(cloths);
 
   // --- market stall near the dock (striped awning + crate of fish)
   const stall = new THREE.Group();
-  stall.position.set(6.2, gy(6.2, -16.5), -16.5);
+  stall.position.set(8, gy(8, -25), -25);
   stall.rotation.y = 0.5;
   h.add(stall);
   const counter = new THREE.Mesh(new THREE.BoxGeometry(3.0, 1.0, 1.2), wood);
@@ -480,7 +704,7 @@ function buildVillage(h, wood, woodDark) {
   }
   inst(stall, awnGeo, toon(0xe5484d), awnRed);
   inst(stall, awnGeo, white, awnCream);
-  const stallM = M(6.2, gy(6.2, -16.5), -16.5, 0.5);
+  const stallM = M(8, gy(8, -25), -25, 0.5);
   postM.push(
     M(-1.35, 1.3, -0.5, 0, [0.8, 2.6, 0.8]).premultiply(stallM),
     M(1.35, 1.3, -0.5, 0, [0.8, 2.6, 0.8]).premultiply(stallM));
@@ -492,19 +716,21 @@ function buildVillage(h, wood, woodDark) {
     M(0.35, 1.58, 0.12, -0.5, [1.5, 0.5, 0.65]).premultiply(stallM),
     M(0.15, 1.7, 0.03, 1.2, [1.4, 0.45, 0.6]).premultiply(stallM),
   ];
-  postM.push(M(-5.6, 4.5, -4.5, 0, [0.8, 2.2, 0.8]), M(-3.4, 4.5, -4.5, 0, [0.8, 2.2, 0.8]));
+  postM.push(M(-9.1, 4.5, -7.5, 0, [0.8, 2.2, 0.8]), M(-6.9, 4.5, -7.5, 0, [0.8, 2.2, 0.8]));
   const bar = new THREE.Mesh(new THREE.BoxGeometry(2.6, 0.14, 0.14), woodDark);
-  bar.position.set(-4.5, 5.45, -4.5);
+  bar.position.set(-8.0, 5.45, -7.5);
   h.add(bar);
   for (let i = 0; i < 4; i++) {
-    fishM.push(M(-5.25 + i * 0.5, 4.98, -4.5, 0.3 * (i % 2), [0.55, 1.35, 0.4]));
+    fishM.push(M(-8.75 + i * 0.5, 4.98, -7.5, 0.3 * (i % 2), [0.55, 1.35, 0.4]));
   }
   inst(h, new THREE.SphereGeometry(0.34, 6, 5), fishMat, fishM);
 
   // --- winding sand path: dock start → cottages (instanced flat patches)
   const PATH = [
-    [0, -19.4, 0.1], [-0.8, -17.2, -0.3], [-0.3, -15.0, 0.25], [0.8, -13.0, 0.15],
-    [0.3, -11.0, -0.1], [-3.2, -9.6, 0.5], [-6.3, -8.6, 0.3], [4.6, -9.0, -0.5], [7.2, -8.2, -0.3],
+    [0, -29.5, 0.1], [-0.7, -27.0, -0.3], [0.4, -24.6, 0.25], [-0.5, -22.2, 0.15],
+    [0.6, -19.8, -0.1], [0, -17.4, 0.2],
+    [-4.2, -15.6, 0.5], [-8.4, -14.4, 0.35], [-12.4, -13.6, 0.25],
+    [4.8, -15.8, -0.5], [9.2, -14.4, -0.35], [13.2, -13.2, -0.25],
   ];
   inst(h, new THREE.BoxGeometry(2.3, 0.14, 1.7), toon(0xf7e7ae),
     PATH.map(([x, z, ry]) => M(x, gy(x, z) + 0.07, z, ry)));
@@ -512,7 +738,7 @@ function buildVillage(h, wood, woodDark) {
   // --- 4 lamp posts along the path (glow-material heads, no extra lights)
   lampMat = new THREE.MeshBasicMaterial({ color: 0xcfc9b8 });
   const lampM = [];
-  for (const [x, z] of [[-2.2, -17.5], [2.2, -13.5], [-2.6, -10.8], [3.4, -9.0]]) {
+  for (const [x, z] of [[-2.3, -27.5], [2.4, -22.5], [-2.6, -18.0], [3.6, -15.2]]) {
     const y = gy(x, z);
     postM.push(M(x, y + 1.6, z, 0, [0.85, 3.2, 0.85]));
     lampM.push(M(x, y + 3.4, z));
@@ -522,7 +748,7 @@ function buildVillage(h, wood, woodDark) {
   // --- rope fence along both dock edges (posts + sagging Line rope)
   const ropeMat = new THREE.LineBasicMaterial({ color: 0xd9c08a });
   for (const sx of [-2.75, 2.75]) {
-    const zs = [-23, -30, -37, -44];
+    const zs = [-33, -41, -49, -57];
     const pts = [];
     for (let i = 0; i < zs.length; i++) {
       postM.push(M(sx, 2.9, zs[i], 0, [0.8, 1.1, 0.8]));
@@ -534,7 +760,7 @@ function buildVillage(h, wood, woodDark) {
 
   // --- beached rowboat on the sand
   const row = new THREE.Group();
-  row.position.set(-13, gy(-13, -14) + 0.35, -14);
+  row.position.set(-20, gy(-20, -26) + 0.35, -26);
   row.rotation.set(0.06, 0.7, 0.08);
   h.add(row);
   row.add(new THREE.Mesh(new THREE.BoxGeometry(3.4, 0.8, 1.5), blue));
@@ -544,20 +770,21 @@ function buildVillage(h, wood, woodDark) {
 
   // --- 2 barrel clusters
   inst(h, new THREE.CylinderGeometry(0.5, 0.55, 1.1, 8), woodDark, [
-    [-3.9, -16.1], [-3.1, -16.9], [-3.6, -15.4], [8.5, -13.3], [9.3, -13.9], [8.8, -14.6],
+    [-5.5, -23.6], [-4.7, -24.4], [-5.2, -22.9], [12.5, -19.3], [13.3, -19.9], [12.8, -20.6],
   ].map(([x, z], i) => M(x, gy(x, z) + 0.55, z, i * 0.9)));
 
   // --- scattered flowers on the grass (instanced, per-instance colors)
   const petals = [0xff8fb3, 0xffd23e, 0xf6f2e8, 0xb48cff];
   const AVOID = [
-    [-9, -8, 3.4], [0.5, -10.5, 3.4], [9, -7.5, 3.4],   // cottages
-    [-8, 8, 4.6], [10, 9, 3.6], [-4.5, -4.5, 2.2],      // hut, lighthouse, rack
+    [-16, -13, 4.8], [1, -17, 4.8], [16, -12, 4.8],       // cottages (+fences)
+    [-14, 12, 4.6], [16, 13, 3.6], [-8, -7.5, 2.4],       // hut, lighthouse, rack
+    [8, -25, 2.6], [-7, -15.7, 1.4],                      // stall, clothesline
     ...PATH.map(([x, z]) => [x, z, 1.7]),
   ];
   const flowers = new THREE.InstancedMesh(new THREE.SphereGeometry(0.18, 6, 5), toon(0xffffff), 20);
   let fi = 0, guard = 0;
   while (fi < 20 && guard++ < 300) {
-    const a = G.rng() * Math.PI * 2, r = 4.5 + G.rng() * 9;
+    const a = G.rng() * Math.PI * 2, r = 5 + G.rng() * 17;
     const x = Math.cos(a) * r, z = Math.sin(a) * r;
     let bad = false;
     for (const [ax, az, ad] of AVOID) {
@@ -576,7 +803,7 @@ function buildVillage(h, wood, woodDark) {
   // --- 2 seagulls perched on the dock-end bollards
   const gullM = [], wingM = [];
   for (const [gx, ry] of [[2.4, 2.6], [-2.4, -2.1]]) {
-    const gm = M(gx, 4.1, -45, ry);
+    const gm = M(gx, 4.1, -58, ry);
     gullM.push(M(0, 0, 0, 0, [1, 0.85, 1.3]).premultiply(gm));
     wingM.push(M(0.36, 0.02, -0.05, 0, null, 0, 0.25).premultiply(gm));
     wingM.push(M(-0.36, 0.02, -0.05, 0, null, 0, -0.25).premultiply(gm));
@@ -585,9 +812,9 @@ function buildVillage(h, wood, woodDark) {
   inst(h, new THREE.BoxGeometry(0.5, 0.06, 0.34), toon(0xcfd6dc), wingM);
 
   // --- quest notice board beside the dock start (quests.js reads G.island)
-  const by = gy(-4.6, -19);
+  const by = gy(-5.2, -26);
   const bGroup = new THREE.Group();
-  bGroup.position.set(-4.6, by, -19); bGroup.rotation.y = 0.25;
+  bGroup.position.set(-5.2, by, -26); bGroup.rotation.y = 0.25;
   h.add(bGroup);
   const board = new THREE.Mesh(new THREE.BoxGeometry(2.3, 1.5, 0.14), wood);
   board.position.y = 2.0;
@@ -595,7 +822,7 @@ function buildVillage(h, wood, woodDark) {
   const paper = new THREE.Mesh(new THREE.PlaneGeometry(0.85, 1.0), white);
   paper.position.set(-0.1, 2.0, -0.09); paper.rotation.y = Math.PI;
   bGroup.add(paper);
-  const bm = M(-4.6, by, -19, 0.25);
+  const bm = M(-5.2, by, -26, 0.25);
   postM.push(
     M(-0.75, 1.45, 0, 0, [0.8, 2.9, 0.8]).premultiply(bm),
     M(0.75, 1.45, 0, 0, [0.8, 2.9, 0.8]).premultiply(bm));
@@ -603,11 +830,23 @@ function buildVillage(h, wood, woodDark) {
   // all wooden poles in one draw call
   inst(h, new THREE.CylinderGeometry(0.13, 0.15, 1, 6), woodDark, postM);
 
-  // --- contract for quests.js (world coordinates)
+  // --- slow chimney smoke puffs (pooled; animated only when the boat is near)
+  smokeMesh = new THREE.InstancedMesh(
+    new THREE.SphereGeometry(0.34, 6, 5),
+    new THREE.MeshBasicMaterial({ color: 0xd8d8d4, transparent: true, opacity: 0.42, depthWrite: false }),
+    SMOKE_COUNT);
+  smokeMesh.instanceMatrix.setUsage?.(THREE.DynamicDrawUsage);
+  smokeMesh.frustumCulled = false;
+  smokeMesh.visible = false;
+  hideAllInstances(smokeMesh, SMOKE_COUNT);
+  G.scene.add(smokeMesh); // world coords (chimTops)
+
+  // --- contract for quests.js + boat.js/characters.js (world coordinates)
   G.island = {
-    dockEnd: { x: HARBOR.x, z: HARBOR.z - 45 },                      // seaward dock tip
-    boardPos: { x: HARBOR.x - 4.6, y: by + 2.0, z: HARBOR.z - 19 },  // notice-board center
+    dockEnd: { x: HARBOR.x, z: HARBOR.z - 59 },                      // seaward dock tip (open water)
+    boardPos: { x: HARBOR.x - 5.2, y: by + 2.0, z: HARBOR.z - 26 },  // notice-board center
     groundY: islandGroundY,                                          // (x,z) -> island surface y
+    radius: ISLAND_R,                                                // beach outer radius (collision)
   };
 }
 
@@ -626,6 +865,8 @@ export function init(g) {
   buildOcean(G.scene);
   buildSky(G.scene);
   buildRain(G.scene);
+  buildSpray(G.scene);
+  buildBolt(G.scene);
   buildWisps(G.scene);
   buildHarbor(G.scene);
 
@@ -657,8 +898,8 @@ function updateWeather(dt) {
   w.storm += Math.max(-step, Math.min(step, dS));
   w.storm = clamp01(w.storm);
   typhoonMix += Math.max(-dt * 0.1, Math.min(dt * 0.1, (w.typhoon ? 1 : 0) - typhoonMix));
-  // calm ~0.4 → storm ~3 → typhoon ~4.5
-  oceanAmp = 0.8 + w.storm * 2.4 + typhoonMix * 1.5;
+  // calm ~0.8 → storm ~4 → typhoon ~5.6 (storm waves read TALL — Eidan's request)
+  oceanAmp = 0.8 + w.storm * 3.2 + typhoonMix * 1.6;
 
   windAngle += Math.sin(G.time.total * 0.07) * dt * 0.25;
   const mag = 2 + w.storm * 16 + typhoonMix * 8;
@@ -786,8 +1027,8 @@ function updateOcean() {
     for (let j = 0; j < WAVES.length; j++) {
       const w = WAVES[j];
       const ph = wx * w.kx + wz * w.kz + t * w.speed;
-      h += w.amp * (Math.sin(ph) + 0.24 * Math.sin(ph * 2.17 + 1.3));
-      const dh = w.amp * (Math.cos(ph) + 0.24 * 2.17 * Math.cos(ph * 2.17 + 1.3));
+      h += w.amp * (Math.sin(ph) + 0.34 * Math.sin(ph * 2.17 + 1.3) + 0.12 * Math.sin(ph * 3.37 + 2.1));
+      const dh = w.amp * (Math.cos(ph) + 0.34 * 2.17 * Math.cos(ph * 2.17 + 1.3) + 0.12 * 3.37 * Math.cos(ph * 3.37 + 2.1));
       sx += dh * w.kx;
       sz += dh * w.kz;
     }
@@ -816,22 +1057,31 @@ function updateOcean() {
   oceanGeo.attributes.color.needsUpdate = true;
 }
 
-// ------------------------------------------------------------- rain
+// ------------------------------------------------------------- rain 2.0
 function updateRain(dt) {
   const storm = frame.storm;
-  rainMat.opacity = clamp01(storm * 1.6 - 0.15) * 0.85;
-  rainPoints.visible = rainMat.opacity > 0.02;
-  if (!rainPoints.visible) return;
-  rainPoints.position.set(frame.bx, 0, frame.bz);
+  rainMat.opacity = clamp01(storm * 1.6 - 0.15) * 0.9;
+  rainMesh.visible = rainMat.opacity > 0.02;
+  updateRipples(dt);
+  if (!rainMesh.visible) return;
+  rainMesh.position.set(frame.bx, 0, frame.bz);
   const w = G.weather.wind;
-  const fall = (26 + storm * 14) * dt;
-  const wx = w.x * 0.25 * dt, wz = w.y * 0.25 * dt;
+  // typhoon = near-horizontal sheets: more wind push, less fall
+  const horiz = 0.55 + typhoonMix * 1.3;
+  rainVel.set(w.x * horiz, -(26 + storm * 16) * (1 - typhoonMix * 0.45), w.y * horiz);
+  const speed = rainVel.length();
+  rainDir.copy(rainVel).divideScalar(speed || 1);
+  dum.quaternion.setFromUnitVectors(UP_V, rainDir);
+  const len = Math.min(3.4, 1.1 + speed * 0.032);
+  dum.scale.set(1, len, 1);
+  // denser with the storm; typhoon uses the whole pool
+  rainMesh.count = Math.max(80, Math.floor(RAIN_COUNT * clamp01(storm * 1.1 + typhoonMix * 0.6)));
   const half = RAIN_BOX * 0.5;
-  for (let i = 0; i < RAIN_COUNT; i++) {
+  for (let i = 0; i < rainMesh.count; i++) {
     const ix = i * 3;
-    rainPos[ix] += wx;
-    rainPos[ix + 1] -= fall;
-    rainPos[ix + 2] += wz;
+    rainPos[ix] += rainVel.x * dt;
+    rainPos[ix + 1] += rainVel.y * dt;
+    rainPos[ix + 2] += rainVel.z * dt;
     if (rainPos[ix + 1] < -2) {
       rainPos[ix + 1] += RAIN_HEIGHT;
       rainPos[ix] = (G.rng() * 2 - 1) * half;
@@ -841,8 +1091,133 @@ function updateRain(dt) {
     else if (rainPos[ix] < -half) rainPos[ix] += RAIN_BOX;
     if (rainPos[ix + 2] > half) rainPos[ix + 2] -= RAIN_BOX;
     else if (rainPos[ix + 2] < -half) rainPos[ix + 2] += RAIN_BOX;
+    dum.position.set(rainPos[ix], rainPos[ix + 1], rainPos[ix + 2]);
+    dum.updateMatrix();
+    rainMesh.setMatrixAt(i, dum.matrix);
   }
-  rainPoints.geometry.attributes.position.needsUpdate = true;
+  rainMesh.instanceMatrix.needsUpdate = true;
+}
+
+// pooled ring ripples where drops smack the water near the boat
+function updateRipples(dt) {
+  const raining = rainMat.opacity > 0.05;
+  if (raining) {
+    ripAccum += dt * (4 + frame.storm * 16 + typhoonMix * 12);
+    let spawns = Math.floor(ripAccum);
+    ripAccum -= spawns;
+    for (let i = 0; i < RIPPLE_COUNT && spawns > 0; i++) {
+      const p = ripP[i];
+      if (p.on) continue;
+      p.on = true; p.age = 0;
+      const a = G.rng() * Math.PI * 2, r = 4 + G.rng() * 24;
+      p.x = frame.bx + Math.cos(a) * r;
+      p.z = frame.bz + Math.sin(a) * r;
+      spawns--;
+    }
+  }
+  let any = false;
+  dum.quaternion.set(0, 0, 0, 1);
+  for (let i = 0; i < RIPPLE_COUNT; i++) {
+    const p = ripP[i];
+    if (!p.on) continue;
+    p.age += dt;
+    if (p.age > 0.65) { p.on = false; ripMesh.setMatrixAt(i, ZERO_M); any = true; continue; }
+    dum.position.set(p.x, heightAt(p.x, p.z) + 0.06, p.z);
+    const s = 0.4 + p.age * 4.2;
+    dum.scale.set(s, 1, s);
+    dum.updateMatrix();
+    ripMesh.setMatrixAt(i, dum.matrix);
+    any = true;
+  }
+  if (any) ripMesh.instanceMatrix.needsUpdate = true;
+  ripMesh.visible = raining || any;
+}
+
+// ------------------------------------------------------------- crest spray
+function updateSpray(dt) {
+  const rate = 5 + frame.storm * 32 + typhoonMix * 22; // spawn tries/sec (more in storms)
+  sprayAccum += dt * rate;
+  let tries = Math.min(6, Math.floor(sprayAccum));
+  sprayAccum -= tries;
+  const thresh = oceanAmp * 0.6; // only on real crests
+  while (tries-- > 0) {
+    const a = G.rng() * Math.PI * 2, r = 6 + G.rng() * 44; // within ~50u of the boat
+    const x = frame.bx + Math.cos(a) * r;
+    const z = frame.bz + Math.sin(a) * r;
+    const hgt = heightAt(x, z);
+    if (hgt < thresh) continue;
+    for (let i = 0; i < SPRAY_COUNT; i++) {
+      const p = sprayP[i];
+      if (p.on) continue;
+      p.on = true;
+      p.x = x; p.y = hgt + 0.2; p.z = z;
+      p.vx = (G.rng() * 2 - 1) * 2 + G.weather.wind.x * 0.12;
+      p.vy = 3.5 + G.rng() * 3.5;
+      p.vz = (G.rng() * 2 - 1) * 2 + G.weather.wind.y * 0.12;
+      p.max = p.life = 0.55 + G.rng() * 0.4;
+      break;
+    }
+  }
+  let any = false;
+  dum.quaternion.set(0, 0, 0, 1);
+  for (let i = 0; i < SPRAY_COUNT; i++) {
+    const p = sprayP[i];
+    if (!p.on) continue;
+    p.life -= dt;
+    if (p.life <= 0) { p.on = false; sprayMesh.setMatrixAt(i, ZERO_M); any = true; continue; }
+    p.x += p.vx * dt; p.y += p.vy * dt; p.z += p.vz * dt;
+    p.vy -= 13 * dt;
+    const u = 1 - p.life / p.max;
+    dum.position.set(p.x, p.y, p.z);
+    dum.scale.setScalar(0.5 + u * 1.7); // puff grows as it flies
+    dum.updateMatrix();
+    sprayMesh.setMatrixAt(i, dum.matrix);
+    any = true;
+  }
+  if (any) sprayMesh.instanceMatrix.needsUpdate = true;
+}
+
+// ------------------------------------------------------------- sun glints
+function updateGlints(dt) {
+  const want = frame.dayL * (1 - frame.storm) * (1 - typhoonMix) * 0.75; // day + calm only
+  glintO = lerp(glintO, want, Math.min(1, dt * 2));
+  glintMat.opacity = glintO;
+  glintMesh.visible = glintO > 0.03;
+  if (!glintMesh.visible) return;
+  const t = G.time.total;
+  for (let i = 0; i < GLINT_COUNT; i++) {
+    // glints live in boat-relative offsets; twinkle by scale
+    const x = frame.bx + glintX[i];
+    const z = frame.bz + glintZ[i];
+    const tw = Math.sin(t * 2.1 + glintPhase[i]);
+    dum.position.set(x, heightAt(x, z) + 0.07, z);
+    dum.scale.setScalar(Math.max(0.001, tw) * (0.7 + 0.5 * Math.sin(glintPhase[i] * 3)));
+    dum.updateMatrix();
+    glintMesh.setMatrixAt(i, dum.matrix);
+  }
+  glintMesh.instanceMatrix.needsUpdate = true;
+}
+
+// ------------------------------------------------------------- chimney smoke
+function updateSmoke() {
+  const dx = frame.bx - HARBOR.x, dz = frame.bz - HARBOR.z;
+  const near = dx * dx + dz * dz < 140 * 140 && chimTops.length > 0;
+  smokeMesh.visible = near;
+  if (!near) return;
+  const t = G.time.total;
+  dum.quaternion.set(0, 0, 0, 1);
+  for (let i = 0; i < SMOKE_COUNT; i++) {
+    const top = chimTops[(i / 3) | 0] || chimTops[0];
+    const u = (t * 0.35 + i * 1.23) % 3 / 3; // slow looping rise
+    dum.position.set(
+      top.x + Math.sin(t * 0.6 + i * 2.1) * 0.25 + u * 1.1,
+      top.y + u * 3.2,
+      top.z + Math.cos(t * 0.5 + i * 1.7) * 0.2 + u * 0.5);
+    dum.scale.setScalar((0.5 + u * 1.5) * (1 - ss(0.8, 1, u)));
+    dum.updateMatrix();
+    smokeMesh.setMatrixAt(i, dum.matrix);
+  }
+  smokeMesh.instanceMatrix.needsUpdate = true;
 }
 
 // ------------------------------------------------------------- cursed wisps
@@ -897,6 +1272,10 @@ export function update(g, dt) {
   updateSky(dt);
   updateOcean();
   updateRain(dt);
+  updateSpray(dt);
+  updateGlints(dt);
+  updateBolt(dt);
+  updateSmoke();
   updateWisps(dt);
   updateHarbor(dt);
   firstFrame = false;

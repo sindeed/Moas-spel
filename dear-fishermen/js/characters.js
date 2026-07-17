@@ -15,6 +15,8 @@ const RING_COLORS = [0xffee66, 0x6fd3ff];
 const HAT_KINDS = ['souwester', 'bucket', 'party', 'squid'];
 const FIX_TIME_HUMAN = 1.5;
 const FIX_TIME_BOT = 2.6;
+const SPRAY_TIME_HUMAN = 1.2;   // 🧯 hold-to-FOOSH
+const SPRAY_TIME_BOT = 2.2;     // bots spray comically long
 
 let G = null;
 // shared geometries / materials (built once in init)
@@ -26,6 +28,7 @@ const TB = new THREE.Vector3();
 const TC = new THREE.Vector3();
 let pendingHats = null;   // from save:apply, used at crew build
 const splashPool = [];    // tiny water-droplet pool
+const foamPool = [];      // white 🧯 foam droplets (same trick, white + floatier)
 
 // The boat's walkable deck height in boat-local space (stations sit on it).
 function deckY() {
@@ -44,6 +47,8 @@ function buildAssets() {
   GEO.star = new THREE.OctahedronGeometry(0.09);
   GEO.plank = new THREE.BoxGeometry(0.7, 0.08, 0.22);
   GEO.bucket = new THREE.CylinderGeometry(0.18, 0.14, 0.24, 10, 1, true);
+  GEO.extTank = new THREE.CylinderGeometry(0.09, 0.09, 0.3, 8);
+  GEO.extNozzle = new THREE.ConeGeometry(0.05, 0.14, 6);
   GEO.fish = new THREE.SphereGeometry(0.24, 10, 8);
   GEO.drop = new THREE.SphereGeometry(0.06, 6, 5);
   // hats
@@ -64,6 +69,8 @@ function buildAssets() {
   MAT.fish = toon(0x7fc7e8);
   MAT.star = toon(0xffe066);
   MAT.drop = new THREE.MeshToonMaterial({ color: 0x8fd8ff, transparent: true, opacity: 0.9 });
+  MAT.foam = new THREE.MeshToonMaterial({ color: 0xffffff, transparent: true, opacity: 0.85 });
+  MAT.extRed = toon(0xd23c2a);
   MAT.rings = RING_COLORS.map((c) => new THREE.MeshBasicMaterial({ color: c, side: THREE.DoubleSide, transparent: true, opacity: 0.85 }));
   MAT.hatYellow = toon(0xffc94d);
   MAT.hatGray = toon(0xb9c4cc);
@@ -181,8 +188,15 @@ function buildGoofball(idx) {
   waterM.scale.set(2.4, 1.2, 2.4); waterM.position.y = 0.08;
   bucketM.add(waterM);
   const fishM = new THREE.Mesh(GEO.fish, MAT.fish);
-  plankM.visible = bucketM.visible = fishM.visible = false;
-  carryHolder.add(plankM, bucketM, fishM);
+  // fire extinguisher 🧯: little red tank + nozzle pointing forward
+  const extM = new THREE.Group();
+  const extTank = new THREE.Mesh(GEO.extTank, MAT.extRed);
+  const extNozzle = new THREE.Mesh(GEO.extNozzle, MAT.black);
+  extNozzle.rotation.x = Math.PI / 2; // cone tip -> +z, at the fire
+  extNozzle.position.set(0, 0.16, 0.12);
+  extM.add(extTank, extNozzle);
+  plankM.visible = bucketM.visible = fishM.visible = extM.visible = false;
+  carryHolder.add(plankM, bucketM, fishM, extM);
 
   // player ring + join tag (humans only, toggled later)
   const ring = new THREE.Mesh(GEO.ring, MAT.rings[0]);
@@ -203,7 +217,7 @@ function buildGoofball(idx) {
 
   obj.scale.setScalar(1.45); // chunky goofballs read better from the chase camera (Dear Passengers energy)
 
-  return { obj, body, eyes, pupils: [pL, pR], eyesWhites: [eL, eR], legs: [legL, legR], arms, hatHolder, carryHolder, plankM, bucketM, waterM, fishM, ring, tag, stars };
+  return { obj, body, eyes, pupils: [pL, pR], eyesWhites: [eL, eR], legs: [legL, legR], arms, hatHolder, carryHolder, plankM, bucketM, waterM, fishM, extM, ring, tag, stars };
 }
 
 // ---------------------------------------------------------------- players
@@ -226,6 +240,7 @@ function makePlayer(idx, human) {
     _hopY: 0, _hopV: 0, _grounded: true,
     _station: null,                     // claimed station (wheel/cannon/rod)
     _fixT: 0,                           // plank-fix progress seconds
+    _sprayT: 0, _foamT: 0,              // 🧯 spray progress + foam-particle throttle
     _submerged: false,
     _dizzy: 0,
     _stumble: 0,
@@ -406,12 +421,21 @@ function setCarry(p, c) {
   parts.bucketM.visible = c === 'bucket' || c === 'bucketFull';
   parts.waterM.visible = c === 'bucketFull';
   parts.fishM.visible = !!(c && c.fish);
+  parts.extM.visible = c === 'extinguisher';
+  if (c !== 'extinguisher') p._sprayT = 0;
 }
 
 function anyActiveLeak() {
   const leaks = G.boat?.leaks;
   if (!leaks) return null;
   for (const l of leaks) if (l.active) return l;
+  return null;
+}
+
+function anyBurningFire() {
+  const fires = G.boat?.fires;
+  if (!fires) return null;
+  for (const f of fires) if (f.hp > 0) return f;
   return null;
 }
 
@@ -441,7 +465,8 @@ function nearestFire(p, maxD) {
 
 function grabFromSupply(p) {
   if (p.carry) { setCarry(p, null); G.sfx?.('thunk'); return; } // put it back
-  setCarry(p, anyActiveLeak() ? 'plank' : 'bucket');
+  // supply cycling: fire beats leak beats bailing (🧯 > plank > bucket)
+  setCarry(p, anyBurningFire() ? 'extinguisher' : anyActiveLeak() ? 'plank' : 'bucket');
   G.sfx?.('thunk');
 }
 
@@ -492,6 +517,34 @@ function buildSplashPool() {
     G.scene.add(m);
     splashPool.push({ m, vel: new THREE.Vector3(), life: 0 });
   }
+  // white foam droplets for the 🧯 (lighter gravity = puffy cone)
+  for (let i = 0; i < 12; i++) {
+    const m = new THREE.Mesh(GEO.drop, MAT.foam);
+    m.scale.setScalar(1.6);
+    m.visible = false;
+    G.scene.add(m);
+    foamPool.push({ m, vel: new THREE.Vector3(), life: 0 });
+  }
+}
+// steady white foam cone out of the nozzle while spraying (throttled, pooled, cheap)
+function spawnFoam(p, dt) {
+  p._foamT -= dt;
+  if (p._foamT > 0) return;
+  p._foamT = 0.07;
+  p.obj.getWorldPosition(TB);
+  const wf = p._face + (G.boat?.heading || 0); // deck-local facing -> world yaw
+  let n = 0;
+  for (const d of foamPool) {
+    if (d.life > 0) continue;
+    d.life = 0.3 + G.rng() * 0.15;
+    d.m.visible = true;
+    d.m.position.copy(TB);
+    d.m.position.y += 1.0;
+    d.vel.set(Math.sin(wf) * 5 + (G.rng() - 0.5) * 1.8,
+              0.5 + (G.rng() - 0.5) * 1.4,
+              Math.cos(wf) * 5 + (G.rng() - 0.5) * 1.8);
+    if (++n >= 2) break;
+  }
 }
 function spawnSplash(p) {
   p.obj.getWorldPosition(TB);
@@ -511,6 +564,13 @@ function updateSplashes(dt) {
     if (d.life <= 0) continue;
     d.life -= dt;
     d.vel.y -= GRAV * dt * 0.6;
+    d.m.position.addScaledVector(d.vel, dt);
+    if (d.life <= 0) d.m.visible = false;
+  }
+  for (const d of foamPool) {
+    if (d.life <= 0) continue;
+    d.life -= dt;
+    d.vel.y -= GRAV * dt * 0.25; // foam is fluffy
     d.m.position.addScaledVector(d.vel, dt);
     if (d.life <= 0) d.m.visible = false;
   }
@@ -664,6 +724,12 @@ function humanPrompt(p) {
     return `🎣 Fishing… ${K.jump}: walk away`;
   }
   if (p._fixT > 0) return `🔨 Fixing… ${Math.round((p._fixT / FIX_TIME_HUMAN) * 100)}%`;
+  if (p._sprayT > 0) return `🧯 FOOSH… ${Math.round((p._sprayT / SPRAY_TIME_HUMAN) * 100)}%`;
+  if (p.carry === 'extinguisher') {
+    if (nearestFire(p, 3)) return `🧯 ${K.act}: FOOSH the fire!`;
+    if (nearestStation(p)?.type === 'supply') return `📦 ${K.act}: Put back`;
+    return `🧯 Find the fire!`;
+  }
   if (p.carry === 'bucketFull') return `💦 ${K.sec}: Throw water!`;
   if (p.carry === 'plank') {
     const leak = nearestLeak(p);
@@ -685,7 +751,7 @@ function humanPrompt(p) {
     if (ns.type === 'wheel') return `🛞 ${K.act}: Steer`;
     if (ns.type === 'rod') return ns.user ? null : `🎣 ${K.act}: Cast line`;
     if (ns.type === 'cannon') return ns.user ? null : `💣 ${K.act}: Man cannon`;
-    if (ns.type === 'supply') return `📦 ${K.act}: Grab ${anyActiveLeak() ? 'plank' : 'bucket'}`;
+    if (ns.type === 'supply') return `📦 ${K.act}: Grab ${anyBurningFire() ? 'extinguisher' : anyActiveLeak() ? 'plank' : 'bucket'}`;
     if (ns.type === 'ladder') return null;
   }
   return null;
@@ -746,6 +812,22 @@ function controlHuman(p, pad, dt) {
     p._fixT = Math.max(0, p._fixT - dt * 2);
   }
 
+  // extinguisher spray: hold ACTION near a burning fire — FOOSH!
+  if (p.carry === 'extinguisher') {
+    const fire = nearestFire(p, 3);
+    if (fire && pad.action) {
+      p._sprayT += dt;
+      spawnFoam(p, dt);
+      if (p._sprayT >= SPRAY_TIME_HUMAN) {
+        G.boat?.extinguish?.(fire.id);
+        p._sprayT = 0;
+        G.sfx?.('whoosh');
+      }
+      return; // spraying = standing your ground, no other action
+    }
+    p._sprayT = Math.max(0, p._sprayT - dt * 2);
+  }
+
   if (pad.secondaryHit && p.carry === 'bucketFull') throwWater(p);
 
   if (pad.helmHit) { takeHelm(p); return; } // F: run to the wheel from anywhere on deck
@@ -802,7 +884,7 @@ function botDecide(p) {
   if (leak) { if (p._task !== 'fix') { releaseStation(p); setTask(p, 'fix'); } return; }
 
   // drop the emergency gear when things are calm again
-  if (p.carry === 'bucket' || p.carry === 'bucketFull' || p.carry === 'plank') { setTask(p, 'stow'); return; }
+  if (p.carry === 'bucket' || p.carry === 'bucketFull' || p.carry === 'plank' || p.carry === 'extinguisher') { setTask(p, 'stow'); return; }
 
   if (p._station?.type === 'rod') { p._task = 'fish'; return; }
   const rod = findStation('rod', true);
@@ -910,7 +992,24 @@ function controlBot(p, dt) {
     return;
   }
   if (task === 'douse') {
-    if (p.carry === 'bucketFull') {
+    if (p.carry === 'extinguisher') {
+      const fire = nearestFire(p, 3);
+      if (fire) {
+        // plant feet, face the flames, and FOOSH for a comically long time
+        moveOnDeck(p, dt, 0, 0, false);
+        if (p.mode !== 'deck') return; // slid overboard mid-FOOSH
+        p._face = Math.atan2(fire.pos.x - p.localPos.x, fire.pos.z - p.localPos.z);
+        p.obj.rotation.y = p._face;
+        p._sprayT += dt;
+        spawnFoam(p, dt);
+        if (p._sprayT >= SPRAY_TIME_BOT) { G.boat?.extinguish?.(fire.id); p._sprayT = 0; G.sfx?.('whoosh'); }
+      } else {
+        p._sprayT = 0;
+        const f = anyBurningFire();
+        if (f?.pos) botGoTo(p, dt, f.pos.x, f.pos.z, 2);
+        else setTask(p, 'stow');
+      }
+    } else if (p.carry === 'bucketFull') {
       const fire = nearestFire(p, 2.5);
       if (fire) throwWater(p);
       else {
@@ -924,7 +1023,11 @@ function controlBot(p, dt) {
       else botGoTo(p, dt, Math.sign(p.localPos.x || 1) * 50, p.localPos.z, 0.4);
     } else {
       const sup = findStation('supply');
-      if (sup && botGoTo(p, dt, sup.localPos.x, sup.localPos.z, sup.radius || 1.5)) { setCarry(p, 'bucket'); G.sfx?.('thunk'); }
+      if (sup && botGoTo(p, dt, sup.localPos.x, sup.localPos.z, sup.radius || 1.5)) {
+        // 50/50: the pro tool or the trusty bucket
+        setCarry(p, G.rng() < 0.5 ? 'extinguisher' : 'bucket');
+        G.sfx?.('thunk');
+      }
     }
     return;
   }
@@ -1086,8 +1189,10 @@ export function update(g, dt) {
       if (hb) {
         const dx = p.obj.position.x - hb.x, dz = p.obj.position.z - hb.z;
         const dist = Math.hypot(dx, dz);
-        if (dist < 32) {
-          const k = 32 / (dist || 1);
+        // the island GROWS — world.js owns the number via G.island.radius (fallback = old 32)
+        const clampR = (G.island?.radius ?? 31) + 1;
+        if (dist < clampR) {
+          const k = clampR / (dist || 1);
           p.obj.position.x = hb.x + dx * k;
           p.obj.position.z = hb.z + dz * k;
         }

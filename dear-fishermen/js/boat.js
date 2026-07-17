@@ -21,7 +21,7 @@ const BOLT_SPEED = 40;
 const BOLT_GRAV = 9.8;
 const BOLT_LIFE = 4;
 const CANNON_COOLDOWN = 0.7;
-const HARBOR_MOOR_DIST = 55;
+const HARBOR_MOOR_DIST = 62; // reaches the tip of Port Johnson's long dock
 const HARBOR_CALM_DIST = 80;         // waves fade to 30% inside this radius
 const PROP_SLIDE_TILT = 0.12;        // |tilt| where cargo starts sliding
 
@@ -130,7 +130,7 @@ export function init(G) {
     stations,
     tilt: { pitch: 0, roll: 0 },
     deckBound, toWorld, toLocal,
-    damage, repair, addLeak, addFire, douse,
+    damage, repair, addLeak, addFire, douse, extinguish,
     kick(n) { rollKick += n; },
     cannon: { yaw: 0, pitch: 0.25, aim: cannonAim, fire: cannonFire },
   };
@@ -293,6 +293,14 @@ function buildWheelhouse() {
   const ring = new THREE.Mesh(new THREE.TorusGeometry(0.26, 0.07, 6, 12), M.red);
   ring.position.set(0.95, DECK_Y + 0.8, -3.42);
   group.add(ring);
+  // fire extinguisher 🧯 mounted on the starboard cabin wall (visual home of the pro tool;
+  // characters.js hands out the carried copy from the supply crate)
+  const extTank = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.09, 0.34, 8), M.red);
+  extTank.position.set(1.6, DECK_Y + 0.75, -3.0);
+  group.add(extTank);
+  bat('dark', 0.07, 0.1, 0.07, 1.6, DECK_Y + 0.97, -3.0);        // valve head
+  bat('dark', 0.05, 0.05, 0.16, 1.6, DECK_Y + 0.99, -2.9);       // stubby nozzle
+  bat('metalDark', 0.04, 0.3, 0.14, 1.53, DECK_Y + 0.75, -3.0);  // wall bracket
   // ship's wheel out front (the wheel station stands here, facing the windows)
   const wheel = new THREE.Mesh(new THREE.TorusGeometry(0.42, 0.06, 6, 10), M.woodDark);
   wheel.position.set(0, DECK_Y + 1.2, -2.45);
@@ -568,6 +576,15 @@ function douse(id) {
   return true;
 }
 
+// extinguish(fireId): the 🧯 pro tool — fully douses one fire in a single FOOSH.
+// Reuses douse() (steam puff per hit); douse emits 'boat:repaired' exactly once,
+// on the hit that kills the fire, so no extra emission is needed here.
+function extinguish(id) {
+  if (!fires.some((f) => f.id === id)) return false;
+  for (let k = 0; k < 3; k++) if (!douse(id)) break; // fires start at hp 3
+  return true;
+}
+
 // aim(dir): world direction -> cannon yaw/pitch (bots + auto-aim use this)
 function cannonAim(dir) {
   if (!B || !dir) return;
@@ -644,7 +661,7 @@ function resetFresh(G) {
   B.cannon.yaw = 0; B.cannon.pitch = 0.25;
   for (const st of B.stations) st.user = null;
   const hb = G.consts?.HARBOR || { x: 0, z: 60 };
-  group.position.set(hb.x + 7.5, FLOAT_Y, hb.z - 36); // in open water beside the dock (island sand reaches r~30)
+  group.position.set(hb.x + 7.5, FLOAT_Y, hb.z - 52); // in open water beside the long dock (island beach reaches r~48)
   B.heading = Math.PI;                              // nose pointing out to sea
   group.rotation.set(0, B.heading, 0);
   B.tilt.pitch = 0; B.tilt.roll = 0;
@@ -753,8 +770,9 @@ function moveBoat(G, dt) {
   const hb = G.consts?.HARBOR || { x: 0, z: 60 };
   const distH = Math.hypot(p.x - hb.x, p.z - hb.z);
   B.moored = distH < HARBOR_MOOR_DIST && Math.abs(B.speed) < 0.5;
-  // island collision: gentle radial pushback so the boat can't beach itself on the sand
-  const ISLAND_R = 33;
+  // island collision: gentle radial pushback so the boat can't beach itself on the sand.
+  // The island GROWS — world.js owns the number via G.island.radius (fallback = old 33).
+  const ISLAND_R = (G.island?.radius ?? 31) + 2;
   if (distH < ISLAND_R) {
     const nx = (p.x - hb.x) / (distH || 1), nz = (p.z - hb.z) / (distH || 1);
     p.x = hb.x + nx * ISLAND_R;
