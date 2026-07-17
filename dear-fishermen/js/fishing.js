@@ -186,7 +186,8 @@ function rollFish(zone, player) {
 }
 
 // ------------------------------------------------------------------ rod visuals
-function makeRodVisual() {
+let poleGeo, poleMat, reelGeo, reelMat, tipGeo, tipMat;
+function makeRodVisual(station) {
   const bobber = new THREE.Mesh(bobberGeo, bobberMat);
   bobber.visible = false;
   G.scene.add(bobber);
@@ -196,17 +197,62 @@ function makeRodVisual() {
   line.frustumCulled = false;
   line.visible = false;
   G.scene.add(line);
-  return { bobber, line };
+
+  // Visible mounted rod pole (Eidan: "the rods aren't showing!"): a chunky trolling
+  // rod in a holder at the station, leaning out over the stern rail.
+  let pole = null, tipAnchor = null;
+  const boatGroup = G.boat?.group;
+  if (boatGroup && station?.localPos) {
+    if (!poleGeo) {
+      poleGeo = new THREE.CylinderGeometry(0.035, 0.06, 2.7, 6);
+      poleGeo.translate(0, 1.35, 0); // pivot at the butt end
+      poleMat = new THREE.MeshToonMaterial({ color: 0x4a2f1c });
+      reelGeo = new THREE.CylinderGeometry(0.09, 0.09, 0.08, 8);
+      reelMat = new THREE.MeshToonMaterial({ color: 0xc9a227 });
+      tipGeo = new THREE.CylinderGeometry(0.03, 0.035, 0.5, 6);
+      tipMat = new THREE.MeshToonMaterial({ color: 0xf4f1e8 });
+    }
+    pole = new THREE.Group();
+    const shaft = new THREE.Mesh(poleGeo, poleMat);
+    const whiteTip = new THREE.Mesh(tipGeo, tipMat);
+    whiteTip.position.y = 2.65;
+    const reel = new THREE.Mesh(reelGeo, reelMat);
+    reel.rotation.z = Math.PI / 2;
+    reel.position.set(0.08, 0.55, 0);
+    tipAnchor = new THREE.Object3D();
+    tipAnchor.position.y = 2.9;
+    pole.add(shaft, whiteTip, reel, tipAnchor);
+    // lean outward (by station side) and backward over the stern
+    const side = Math.sign(station.localPos.x) || 1;
+    pole.position.set(station.localPos.x + side * 0.35, station.localPos.y, station.localPos.z - 0.3);
+    pole.rotation.z = -side * 0.85; // tilt out over the rail
+    pole.rotation.x = 0.5;          // and back over the stern
+    boatGroup.add(pole);
+  }
+  return { bobber, line, pole, tipAnchor, bend: 0 };
 }
 
 function rodTip(rod, out) {
-  // world position of the rod tip: station pos lifted up a bit
+  // world position of the actual pole tip (fallback: station pos lifted up)
+  if (rod.vis?.tipAnchor) return rod.vis.tipAnchor.getWorldPosition(out);
   const st = rod.station;
   TMP_A.set(st.localPos?.x || 0, st.localPos?.y || 0, st.localPos?.z || 0);
   const w = G.boat?.toWorld ? G.boat.toWorld(TMP_A) : TMP_A;
   out.copy(w);
   out.y += 2.4;
   return out;
+}
+
+// The rod bends toward the water while a fish is on (pure juice).
+function updatePoleBend(rod, dt) {
+  const vis = rod.vis;
+  if (!vis?.pole) return;
+  const target = rod.phase === 'fight' ? 1 : rod.phase === 'bite' ? 0.6 : 0;
+  vis.bend += (target - vis.bend) * Math.min(1, dt * 6);
+  const side = Math.sign(rod.station?.localPos?.x || 1) || 1;
+  const wobble = rod.phase === 'fight' ? Math.sin(rod.t * 13) * 0.06 : 0;
+  vis.pole.rotation.z = -side * (0.85 + vis.bend * 0.5 + wobble);
+  vis.pole.rotation.x = 0.5 + vis.bend * 0.25;
 }
 
 function updateLine(rod) {
@@ -241,7 +287,7 @@ function ensureRods() {
         waitT: 0, biteT: 0, castAt: 0, pendingFish: null,
         botTimer: 0, botBit: false, bob: rand() * 6.28,
         target: new THREE.Vector3(), from: new THREE.Vector3(),
-        vis: makeRodVisual(),
+        vis: makeRodVisual(st),
       });
     }
   }
@@ -422,6 +468,7 @@ function updateRod(rod, dt) {
       break;
     }
   }
+  updatePoleBend(rod, dt);
   updateLine(rod);
 }
 
