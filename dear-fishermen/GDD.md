@@ -105,6 +105,7 @@ Round bodies, stubby legs, floppy noodle arms (sinusoidal flop), big eyes, const
 | SECONDARY (throw water/harpoon, tail slam) | Q | , (comma) | B button |
 | Jump / dive / ladder | Space | Right Shift | JUMP button |
 | Take the helm (from anywhere on deck) | F | — | — |
+| Free camera orbit | mouse drag + scroll zoom, C = auto | — | drag the sea |
 | Camera POV (1st ↔ 3rd person) | V | — | 👁️ button |
 | Pause | Esc | Esc | ⏸ button |
 

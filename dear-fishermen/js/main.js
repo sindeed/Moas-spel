@@ -182,6 +182,7 @@ window.addEventListener('keydown', (ev) => {
   }
   if (ev.code === 'KeyV' || (!ev.code && ev.key?.toLowerCase?.() === 'v')) togglePov();
   if (ev.code === 'KeyG' || (!ev.code && ev.key?.toLowerCase?.() === 'g')) togglePixel();
+  if (ev.code === 'KeyC' || (!ev.code && ev.key?.toLowerCase?.() === 'c')) resetCam();
 });
 window.addEventListener('keyup', (ev) => {
   for (const pid of ['p1', 'p2']) {
@@ -297,7 +298,7 @@ document.getElementById('btn-pixel')?.addEventListener('click', togglePixel);
 on('leviathan:begin', () => { if (G.cameraMode === 'first') { G.cameraMode = 'third'; restorePovBody(); } });
 on('state:change', ({ to }) => {
   if (to === 'title' || to === 'gameover') { G.cameraMode = 'third'; restorePovBody(); }
-  if (to === 'title') { G.input.p2Active = false; clearHeld(); } // accidental P2 joins reset at the title
+  if (to === 'title') { G.input.p2Active = false; clearHeld(); camManual = false; } // resets at the title
 });
 
 // Mouse look (Eidan's request): in first person, click the screen to grab the mouse and look around.
@@ -315,6 +316,50 @@ document.addEventListener('mousemove', (ev) => {
   mouseYaw += ev.movementX * 0.0035;
   mousePitch = THREE.MathUtils.clamp(mousePitch - ev.movementY * 0.003, -1.15, 1.15);
 });
+
+// Third-person manual orbit (Eidan: "let me control my camera myself"):
+// drag to spin around the boat, wheel to zoom, C to go back to auto.
+let camManual = false;
+let orbitYaw = 0, orbitPitch = 0.55, orbitDist = 30;
+let dragId = null, dragX = 0, dragY = 0;
+function seedOrbitFromCamera(target) {
+  const dx = camera.position.x - target.x;
+  const dy = camera.position.y - target.y;
+  const dz = camera.position.z - target.z;
+  orbitDist = Math.max(14, Math.hypot(dx, dy, dz));
+  orbitYaw = Math.atan2(dx, dz);
+  orbitPitch = THREE.MathUtils.clamp(Math.asin(dy / orbitDist), 0.08, 1.35);
+}
+renderer.domElement.addEventListener('pointerdown', (ev) => {
+  if (G.cameraMode !== 'third' || G.state !== 'playing') return;
+  dragId = ev.pointerId; dragX = ev.clientX; dragY = ev.clientY;
+});
+window.addEventListener('pointermove', (ev) => {
+  if (ev.pointerId !== dragId) return;
+  const dx = ev.clientX - dragX, dy = ev.clientY - dragY;
+  dragX = ev.clientX; dragY = ev.clientY;
+  if (!camManual) {
+    if (Math.abs(dx) + Math.abs(dy) < 3) return; // ignore micro-jitter on taps
+    if (G.boat) seedOrbitFromCamera(G.boat.group.position);
+    camManual = true;
+    G.ui?.toast('Free camera 🎥 — drag to spin, scroll to zoom, C = auto');
+  }
+  orbitYaw -= dx * 0.006;
+  orbitPitch = THREE.MathUtils.clamp(orbitPitch + dy * 0.005, 0.08, 1.35);
+});
+const endDrag = (ev) => { if (ev.pointerId === dragId) dragId = null; };
+window.addEventListener('pointerup', endDrag);
+window.addEventListener('pointercancel', endDrag);
+window.addEventListener('wheel', (ev) => {
+  if (G.cameraMode !== 'third' || G.state !== 'playing') return;
+  if (!camManual && G.boat) { seedOrbitFromCamera(G.boat.group.position); camManual = true; }
+  orbitDist = THREE.MathUtils.clamp(orbitDist * (1 + ev.deltaY * 0.0012), 14, 85);
+}, { passive: true });
+function resetCam() {
+  if (!camManual) return;
+  camManual = false;
+  G.ui?.toast('Auto camera 🎥');
+}
 
 // Facing for first person: derived from movement so no module contract change is needed.
 const povFacing = new THREE.Vector3(0, 0, -1);
@@ -398,6 +443,18 @@ function updateCamera(dt) {
     dist = 27 + zoom * 34; height = 13 + zoom * 20;
   } else {
     target = camLook.set(0, 0, 0);
+  }
+  // manual orbit overrides the auto angle (still follows the boat)
+  if (camManual && !G.cameraFocus && G.boat) {
+    const cp = Math.cos(orbitPitch);
+    camGoal.set(
+      target.x + Math.sin(orbitYaw) * cp * orbitDist,
+      target.y + Math.sin(orbitPitch) * orbitDist,
+      target.z + Math.cos(orbitYaw) * cp * orbitDist);
+    camera.position.lerp(camGoal, Math.min(1, dt * 8));
+    camLook.lerp(tmpV.set(target.x, target.y + 2, target.z), Math.min(1, dt * 10));
+    camera.lookAt(camLook);
+    return;
   }
   camGoal.set(target.x, target.y + height, target.z + dist);
   camera.position.lerp(camGoal, Math.min(1, dt * 2.2));
