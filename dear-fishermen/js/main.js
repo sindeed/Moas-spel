@@ -9,9 +9,10 @@ import * as fishing from './fishing.js';
 import * as threats from './threats.js';
 import * as economy from './economy.js';
 import * as hud from './hud.js';
+import * as map from './map.js';
 import * as audio from './audio.js';
 
-const MODULES = { world, boat, characters, sea, fishing, threats, economy, hud, audio };
+const MODULES = { world, boat, characters, sea, fishing, threats, economy, hud, map, audio };
 const SAVE_KEY = 'dear-fishermen-v1';
 export const DAY_SEC = 600;   // 10 min of daylight (Eidan's spec)
 export const NIGHT_SEC = 600; // 10 min of night
@@ -488,7 +489,7 @@ on('ui:legacy', () => { G.legacy = true; setState('playing'); emit('game:legacy'
 on('boat:sunk', () => { setState('gameover'); });
 
 // ---------------------------------------------------------------- init modules
-const ORDER = ['world', 'boat', 'characters', 'sea', 'fishing', 'threats', 'economy', 'hud', 'audio'];
+const ORDER = ['world', 'boat', 'characters', 'sea', 'fishing', 'threats', 'economy', 'hud', 'map', 'audio'];
 for (const name of ORDER) {
   try { MODULES[name].init(G); } catch (err) { console.error(`[init:${name}]`, err); }
 }

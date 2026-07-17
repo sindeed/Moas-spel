@@ -764,7 +764,9 @@ function controlHuman(p, pad, dt) {
       return;
     }
     if (ns?.type === 'supply') { grabFromSupply(p); return; }
-    if ((ns?.type === 'wheel' || ns?.type === 'cannon' || ns?.type === 'rod') && !ns.user && !p.carry) {
+    if ((ns?.type === 'wheel' || ns?.type === 'cannon' || ns?.type === 'rod') &&
+        (!ns.user || !ns.user.human) && !p.carry) {
+      if (ns.user) { releaseStation(ns.user); G.ui?.toast('Move over, buddy! 🎣'); } // bots yield to humans
       ns.user = p; p._station = ns;
       p.localPos.copy(ns.localPos); p.localPos.y = deckY();
       p._vel.set(0, 0, 0);
